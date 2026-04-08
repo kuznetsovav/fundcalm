@@ -2,26 +2,154 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+@font-face {
+  font-family: "Geist";
+  src: url("./fonts/GeistVF.woff") format("woff");
+  font-weight: 100 900;
+  font-display: swap;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@font-face {
+  font-family: "GeistMono";
+  src: url("./fonts/GeistMonoVF.woff") format("woff");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-[#F9FAFB] text-slate-900 antialiased;
+  }
+
+  ::selection {
+    @apply bg-emerald-200 text-slate-900;
   }
 }
 
-body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
-}
+@layer components {
+  /* Surfaces — white cards on gray-50 canvas */
+  .fc-surface {
+    @apply rounded-2xl border border-gray-100 bg-white shadow-fc-sm;
+  }
 
-@layer utilities {
-  .text-balance {
-    text-wrap: balance;
+  .fc-surface-quiet {
+    @apply rounded-2xl border border-gray-100 bg-gray-50/90;
+  }
+
+  .fc-onboarding-card {
+    @apply rounded-3xl border border-gray-100 bg-white p-6 shadow-fc sm:p-8;
+  }
+
+  /* Primary CTA — emerald with subtle depth */
+  .fc-btn-primary {
+    @apply inline-flex items-center justify-center rounded-xl bg-emerald-500 px-6 py-3.5 text-sm font-semibold text-white shadow-[0_1px_0_0_theme(colors.emerald.600),0_3px_10px_-2px_rgba(16,185,129,0.45)] transition-all hover:bg-emerald-600 active:translate-y-px active:shadow-[0_0_0_0_theme(colors.emerald.600)] disabled:cursor-not-allowed disabled:opacity-40 disabled:active:translate-y-0;
+  }
+
+  .fc-btn-primary-block {
+    @apply inline-flex w-full items-center justify-center rounded-xl bg-emerald-500 py-3.5 text-sm font-semibold text-white shadow-[0_1px_0_0_theme(colors.emerald.600),0_3px_10px_-2px_rgba(16,185,129,0.45)] transition-all hover:bg-emerald-600 active:translate-y-px active:shadow-[0_0_0_0_theme(colors.emerald.600)] disabled:cursor-not-allowed disabled:opacity-40 disabled:active:translate-y-0;
+  }
+
+  .fc-btn-secondary {
+    @apply inline-flex shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-white px-4 py-3.5 text-sm font-medium text-slate-800 transition-colors hover:bg-gray-50;
+  }
+
+  .fc-link-muted {
+    @apply text-sm text-slate-500 transition-colors hover:text-slate-800;
+  }
+
+  .fc-eyebrow {
+    @apply text-center text-[13px] font-medium text-slate-500;
+  }
+
+  .fc-eyebrow-left {
+    @apply text-left text-[13px] font-medium text-slate-500;
+  }
+
+  .fc-title-xl {
+    @apply text-4xl font-semibold tracking-tight text-slate-900 sm:text-5xl;
+  }
+
+  .fc-title-lg {
+    @apply text-2xl font-semibold tracking-tight text-slate-900 sm:text-[1.75rem];
+  }
+
+  .fc-option {
+    @apply w-full rounded-xl border border-gray-200 bg-white px-4 py-4 text-left text-[15px] text-slate-800 transition-all hover:border-gray-300 hover:bg-gray-50/80;
+  }
+
+  .fc-option-selected {
+    @apply border-emerald-500 bg-emerald-50/80 text-slate-900 ring-1 ring-emerald-500/20;
+  }
+
+  .fc-progress-bar {
+    @apply h-1 w-full overflow-hidden rounded-full bg-gray-200;
+  }
+
+  .fc-progress-bar-fill {
+    @apply h-full rounded-full bg-emerald-500 transition-[width] duration-300 ease-out;
+  }
+
+  .fc-slider-track {
+    @apply h-1.5 w-full cursor-pointer appearance-none rounded-full bg-gray-200 accent-emerald-500;
+  }
+
+  /* Large thumb + tall hit area for onboarding sliders */
+  .fc-onboarding-range-wrap {
+    @apply flex min-h-[52px] items-center py-2;
+  }
+
+  .fc-onboarding-range {
+    @apply h-3 w-full cursor-pointer appearance-none rounded-full bg-gray-200;
+    --fc-thumb: theme("colors.emerald.500");
+  }
+
+  .fc-onboarding-range::-webkit-slider-runnable-track {
+    height: 0.625rem;
+    border-radius: 9999px;
+    background: rgb(229 231 235);
+  }
+
+  .fc-onboarding-range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 1.5rem;
+    width: 1.5rem;
+    border-radius: 9999px;
+    background: var(--fc-thumb);
+    border: 3px solid white;
+    box-shadow: 0 2px 6px rgba(15, 23, 42, 0.15);
+    margin-top: -0.4375rem;
+  }
+
+  .fc-onboarding-range::-moz-range-thumb {
+    height: 1.5rem;
+    width: 1.5rem;
+    border-radius: 9999px;
+    background: var(--fc-thumb);
+    border: 3px solid white;
+    box-shadow: 0 2px 6px rgba(15, 23, 42, 0.15);
+  }
+
+  .fc-onboarding-range::-moz-range-track {
+    height: 0.625rem;
+    border-radius: 9999px;
+    background: rgb(229 231 235);
+  }
+
+  .fc-onboarding-well {
+    @apply rounded-xl bg-gray-100 px-4 py-7 text-center;
+  }
+
+  .fc-recommended-card {
+    @apply rounded-2xl border border-emerald-200/80 bg-emerald-50 px-5 py-5;
+  }
+
+  .fc-pill-outline {
+    @apply inline-flex items-center justify-center rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-slate-800 transition-colors hover:bg-gray-50;
   }
 }
