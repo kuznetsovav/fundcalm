@@ -16,7 +16,7 @@ export function dashboardComfortNarrative(
 }
 
 /**
- * Short copy with the user’s own cash, spending, runway, and cushion target.
+ * Short copy with the user's own cash, spending, runway, and cushion target.
  */
 export function dashboardSituationNarrative(
   input: FinancialInput,
@@ -41,7 +41,7 @@ export type SituationCompareRow = {
   target: string;
 };
 
-/** Side-by-side “today” vs “target liquidity” for attention states. */
+/** Side-by-side "today" vs "target liquidity" for attention states. */
 export function dashboardCurrentVsTargetRows(
   input: FinancialInput,
   metrics: FinancialMetrics,
@@ -51,24 +51,24 @@ export function dashboardCurrentVsTargetRows(
   const targetMonths = Math.round(metrics.required_cash / input.monthly_expenses);
   return [
     {
-      label: “Liquid cash (usable soon)”,
+      label: "Liquid cash (usable soon)",
       current: fmtMoney(input.cash_amount),
       target: fmtMoney(metrics.required_cash),
     },
     {
-      label: “Runway (months of spending in cash)”,
+      label: "Runway (months of spending in cash)",
       current: `${runway} mo`,
       target: `${targetMonths} mo`,
     },
     {
-      label: “Estimated monthly spending”,
+      label: "Estimated monthly spending",
       current: fmtMoney(input.monthly_expenses),
       target: fmtMoney(input.monthly_expenses),
     },
     {
       label: `Gap vs ${targetMonths}-month cash target`,
-      current: metrics.gap > 0 ? fmtMoney(metrics.gap) + “ below” : metrics.gap < 0 ? fmtMoney(-metrics.gap) + “ above” : “On target”,
-      target: “0 (fully cushioned)”,
+      current: metrics.gap > 0 ? fmtMoney(metrics.gap) + " below" : metrics.gap < 0 ? fmtMoney(-metrics.gap) + " above" : "On target",
+      target: "0 (fully cushioned)",
     },
   ];
 }

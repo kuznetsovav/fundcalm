@@ -43,6 +43,37 @@ create or replace trigger financial_profiles_updated_at
 alter table if exists financial_profiles
   add column if not exists mortgage_pressure text;
 
+-- Add primary_fear (run once if the table already exists).
+alter table if exists financial_profiles
+  add column if not exists primary_fear text;
+
+-- Snapshots: one row per check-in, capturing the state *before* each update.
+create table if not exists profile_snapshots (
+  id                uuid primary key default gen_random_uuid(),
+  user_id           uuid not null references users(id) on delete cascade,
+  taken_at          timestamptz not null default now(),
+  income            text not null,
+  savings           text not null,
+  savings_rate      text not null,
+  country           text not null,
+  savings_mix       text not null,
+  income_stability  text not null,
+  mortgage_pressure text not null,
+  primary_fear      text,
+  -- Derived metrics stored at snapshot time so we can display delta cheaply.
+  status            text,
+  runway_months     numeric,
+  gap_amount        numeric
+);
+
+create policy "Snapshots: read own"
+  on profile_snapshots for select using (user_id = auth.uid());
+
+create policy "Snapshots: insert own"
+  on profile_snapshots for insert with check (user_id = auth.uid());
+
+alter table profile_snapshots enable row level security;
+
 -- Row-level security: allow everything through the service role,
 -- restrict anon to own rows.
 alter table users enable row level security;

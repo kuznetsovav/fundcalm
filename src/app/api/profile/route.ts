@@ -15,6 +15,9 @@ import type {
   IncomeStability,
   MortgagePressure,
 } from "@/lib/engine";
+import { isEmailConfigured, sendWelcomeEmail } from "@/lib/email";
+import { getFinancialStatus, fromOnboarding } from "@/lib/engine";
+import { currencyLocaleFromCountryCode } from "@/lib/money-tiers";
 
 const VALID_INCOME = new Set<string>(INCOME_TIER_ORDER);
 const VALID_SAVINGS = new Set<string>(SAVINGS_TIER_ORDER);
@@ -40,6 +43,13 @@ const VALID_MORTGAGE = new Set<string>([
   "housing_heavy",
 ]);
 
+const VALID_FEAR = new Set<string>([
+  "income_loss",
+  "market_crash",
+  "making_mistake",
+  "missing_opportunities",
+]);
+
 function validate(body: Record<string, unknown>): ProfileInput | string {
   const {
     income,
@@ -49,6 +59,7 @@ function validate(body: Record<string, unknown>): ProfileInput | string {
     savingsMix,
     incomeStability,
     mortgagePressure,
+    primaryFear,
     email,
   } = body;
 
@@ -72,6 +83,8 @@ function validate(body: Record<string, unknown>): ProfileInput | string {
     !VALID_MORTGAGE.has(mortgagePressure)
   )
     return "Invalid mortgagePressure";
+  if (primaryFear !== undefined && (typeof primaryFear !== "string" || !VALID_FEAR.has(primaryFear)))
+    return "Invalid primaryFear";
   if (email !== undefined && typeof email !== "string")
     return "email must be a string";
 
@@ -83,6 +96,7 @@ function validate(body: Record<string, unknown>): ProfileInput | string {
     savingsMix: savingsMix as SavingsMix,
     incomeStability: incomeStability as IncomeStability,
     mortgagePressure: mortgagePressure as MortgagePressure,
+    primaryFear: primaryFear as string | undefined,
     email: email as string | undefined,
   };
 }
@@ -112,8 +126,45 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const result = await saveUserProfile(parsed);
-    return NextResponse.json(result, { status: 201 });
+    const saved = await saveUserProfile(parsed);
+
+    // Send welcome email in the background if email was provided.
+    if (parsed.email && isEmailConfigured()) {
+      try {
+        const onboarding = {
+          income: parsed.income,
+          savings: parsed.savings,
+          savingsRate: parsed.savingsRate,
+          country: parsed.country,
+          savingsMix: parsed.savingsMix,
+          incomeStability: parsed.incomeStability,
+          mortgagePressure: parsed.mortgagePressure,
+          primaryFear: parsed.primaryFear as import("@/lib/engine").PrimaryFear | undefined,
+        };
+        const financial = fromOnboarding(onboarding);
+        const result = getFinancialStatus(financial);
+        const { locale, currency } = currencyLocaleFromCountryCode(parsed.country);
+        const fmt = (n: number) =>
+          new Intl.NumberFormat(locale, { style: "currency", currency, maximumFractionDigits: 0 }).format(Math.round(Math.abs(n)));
+        const statusLabels: Record<string, string> = {
+          ok: "Comfortable",
+          warning: "Limited",
+          risk: "Attention",
+          critical: "Urgent",
+        };
+        await sendWelcomeEmail({
+          to: parsed.email,
+          userId: saved.userId,
+          statusBadge: statusLabels[result.status] ?? result.status,
+          runway: `${Math.round(result.financialMetrics.runway * 10) / 10} months`,
+        });
+      } catch (emailErr) {
+        // Never let email failure block the response
+        console.error("Welcome email failed:", emailErr instanceof Error ? emailErr.message : emailErr);
+      }
+    }
+
+    return NextResponse.json(saved, { status: 201 });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("POST /api/profile:", message);

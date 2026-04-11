@@ -14,6 +14,7 @@ import {
 import {
   splitSavingsByMix,
   inferSavingsMixFromLegacy,
+  coercePrimaryFear,
   type IncomeRange,
   type SavingsRange,
   type SavingsRateRange,
@@ -37,6 +38,7 @@ export interface ProfileInput {
   savingsMix: SavingsMix;
   incomeStability: IncomeStability;
   mortgagePressure: MortgagePressure;
+  primaryFear?: string;
   email?: string;
 }
 
@@ -55,8 +57,15 @@ export interface ProfileRow {
   income_stability: IncomeStability | null;
   debt_pressure: DebtPressure | null;
   mortgage_pressure: MortgagePressure | null;
+  primary_fear: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface UserRow {
+  id: string;
+  email: string | null;
+  created_at: string;
 }
 
 function debtToMortgageFallback(d: DebtPressure | null): MortgagePressure {
@@ -127,6 +136,7 @@ export async function saveUserProfile(
         savings_mix: input.savingsMix,
         income_stability: input.incomeStability,
         mortgage_pressure: input.mortgagePressure,
+        primary_fear: input.primaryFear ?? null,
       },
       { onConflict: "user_id" },
     )
@@ -189,6 +199,10 @@ export function profileToOnboardingInput(row: ProfileRow): OnboardingInput {
   const incomeStability =
     coerceIncomeStability(String(row.income_stability ?? "")) ?? "steady";
 
+  const primaryFear = coercePrimaryFear
+    ? coercePrimaryFear(String(row.primary_fear ?? ""))
+    : undefined;
+
   return {
     income,
     savings,
@@ -197,5 +211,22 @@ export function profileToOnboardingInput(row: ProfileRow): OnboardingInput {
     savingsMix,
     incomeStability,
     mortgagePressure,
+    ...(primaryFear ? { primaryFear } : {}),
   };
+}
+
+// ---------------------------------------------------------------------------
+// User helpers
+// ---------------------------------------------------------------------------
+
+/** Fetch user row (for email lookup). */
+export async function getUserEmail(userId: string): Promise<string | null> {
+  const sb = await getSupabase();
+  const { data, error } = await sb
+    .from("users")
+    .select("email")
+    .eq("id", userId)
+    .maybeSingle();
+  if (error) return null;
+  return (data as { email: string | null } | null)?.email ?? null;
 }

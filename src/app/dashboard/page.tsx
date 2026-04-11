@@ -15,6 +15,7 @@ import {
   type FinancialMetrics,
 } from "@/lib/engine";
 import { getUserProfile, profileToOnboardingInput } from "@/lib/profiles";
+import { getLatestSnapshot, snapshotMonthLabel, type SnapshotRow } from "@/lib/snapshots";
 import { financialResultToContextText } from "@/lib/explain";
 import {
   financialEstimatesForDisplay,
@@ -251,14 +252,19 @@ async function resolveDashboardData(
 ): Promise<{
   onboarding: OnboardingInput;
   financial: FinancialInput;
+  userId?: string;
+  snapshot?: SnapshotRow | null;
 } | null> {
   const userId = typeof sp.user === "string" ? sp.user : undefined;
   if (userId) {
     try {
-      const row = await withTimeout(getUserProfile(userId), 5_000, null);
+      const [row, snapshot] = await Promise.all([
+        withTimeout(getUserProfile(userId), 5_000, null),
+        withTimeout(getLatestSnapshot(userId), 3_000, null),
+      ]);
       if (row) {
         const onboarding = profileToOnboardingInput(row);
-        return { onboarding, financial: fromOnboarding(onboarding) };
+        return { onboarding, financial: fromOnboarding(onboarding), userId, snapshot };
       }
     } catch {
       // Supabase unavailable — fall through
@@ -367,6 +373,51 @@ function EmptyState() {
   );
 }
 
+function DeltaBadge({ current, previous, label }: {
+  current: number;
+  previous: number;
+  label: string;
+}) {
+  const diff = Math.round((current - previous) * 10) / 10;
+  if (Math.abs(diff) < 0.1) return null;
+  const up = diff > 0;
+  return (
+    <span className={`inline-flex items-center gap-1 text-xs font-medium ${up ? "text-emerald-700" : "text-red-600"}`}>
+      <span>{up ? "↑" : "↓"}</span>
+      <span>{up ? "+" : ""}{diff} {label} since {label === "months" ? "" : ""}</span>
+    </span>
+  );
+}
+
+function CheckinBanner({ userId, snapshot, checkinJustDone }: {
+  userId: string;
+  snapshot?: SnapshotRow | null;
+  checkinJustDone?: boolean;
+}) {
+  if (checkinJustDone) {
+    return (
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+        Numbers updated. Your dashboard has been recalculated.
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-xl border border-gray-100 bg-gray-50/80 px-4 py-3">
+      <p className="text-xs text-slate-500">
+        {snapshot
+          ? `Last check-in: ${snapshotMonthLabel(snapshot.taken_at)}`
+          : "Keep your numbers up to date for an accurate read."}
+      </p>
+      <Link
+        href={`/checkin?user=${userId}`}
+        className="shrink-0 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
+      >
+        Update numbers
+      </Link>
+    </div>
+  );
+}
+
 function ClarityView({
   result,
   input,
@@ -375,6 +426,9 @@ function ClarityView({
   suggestionLines,
   explainContext,
   editableParams,
+  userId,
+  snapshot,
+  checkinJustDone,
 }: {
   result: FinancialResult;
   input: FinancialInput;
@@ -384,6 +438,9 @@ function ClarityView({
   explainContext?: string;
   /** Raw URL param values for building inline-edit navigation URLs. */
   editableParams: Record<string, string>;
+  userId?: string;
+  snapshot?: SnapshotRow | null;
+  checkinJustDone?: boolean;
 }) {
   const { currency, locale } = currencyLocaleFromCountryCode(countryCode);
   const m = result.financialMetrics;
@@ -410,6 +467,10 @@ function ClarityView({
   const profileRows = onboardingAnswersForDisplay(onboarding);
   const estimateRows = financialEstimatesForDisplay(input, m);
 
+  const runwayDiff = snapshot?.runway_months != null
+    ? Math.round((m.runway - snapshot.runway_months) * 10) / 10
+    : null;
+
   return (
     <div className="space-y-4">
       <header className="flex items-baseline justify-between gap-4">
@@ -418,6 +479,11 @@ function ClarityView({
           Start over
         </Link>
       </header>
+
+      {/* Check-in banner */}
+      {userId && (
+        <CheckinBanner userId={userId} snapshot={snapshot} checkinJustDone={checkinJustDone} />
+      )}
 
       {/* 1. Highlight */}
       <section
@@ -444,6 +510,11 @@ function ClarityView({
           <div className="rounded-lg border border-slate-200/80 bg-white/60 px-3 py-2">
             <dt className="text-xs text-slate-500">Runway</dt>
             <dd className="font-semibold text-slate-900">{result.metrics.runway}</dd>
+            {runwayDiff !== null && Math.abs(runwayDiff) >= 0.1 && (
+              <dd className={`mt-0.5 text-xs font-medium ${runwayDiff > 0 ? "text-emerald-700" : "text-red-600"}`}>
+                {runwayDiff > 0 ? "↑" : "↓"} {runwayDiff > 0 ? "+" : ""}{runwayDiff} mo since {snapshotMonthLabel(snapshot!.taken_at)}
+              </dd>
+            )}
           </div>
           <div className="rounded-lg border border-slate-200/80 bg-white/60 px-3 py-2">
             <dt className="text-xs text-slate-500">Target</dt>
@@ -787,6 +858,9 @@ export default async function Dashboard({
   const resolved = await resolveDashboardData(sp);
   const input = resolved?.financial ?? null;
   const onboarding = resolved?.onboarding ?? null;
+  const userId = resolved?.userId;
+  const snapshot = resolved?.snapshot;
+  const checkinJustDone = sp.checkin === "1";
   const result = input ? getFinancialStatus(input) : null;
 
   const suggestionLines =
@@ -837,6 +911,9 @@ export default async function Dashboard({
           suggestionLines={suggestionLines}
           explainContext={explainContext}
           editableParams={editableParams}
+          userId={userId}
+          snapshot={snapshot}
+          checkinJustDone={checkinJustDone}
         />
       ) : (
         <EmptyState />

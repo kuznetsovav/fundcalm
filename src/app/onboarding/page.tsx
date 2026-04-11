@@ -41,7 +41,8 @@ type StepKey =
   | "savingsMix"
   | "incomeStability"
   | "primaryFear"
-  | "mortgage";
+  | "mortgage"
+  | "email";
 
 const ORDER: StepKey[] = [
   "country",
@@ -52,6 +53,7 @@ const ORDER: StepKey[] = [
   "incomeStability",
   "primaryFear",
   "mortgage",
+  "email",
 ];
 
 const STEPS: Record<StepKey, { title: string; hint?: string }> = {
@@ -61,15 +63,15 @@ const STEPS: Record<StepKey, { title: string; hint?: string }> = {
   },
   income: {
     title: "Earn after taxes",
-    hint: "Drag smoothly from zero up, or pick “more than” if exact pay doesn’t matter for your plan.",
+    hint: 'Drag smoothly from zero up, or pick \u201Cmore than\u201D if exact pay doesn\u2019t matter for your plan.',
   },
   savingsRate: {
     title: "Save monthly",
-    hint: "Drag to match what you usually save or invest from take-home—the % and typical monthly amount move together.",
+    hint: "Drag to match what you usually save or invest from take-home\u2014the % and typical monthly amount move together.",
   },
   savings: {
     title: "Total savings",
-    hint: "Drag from zero up, or choose “more than” if the exact total doesn’t matter for your plan.",
+    hint: 'Drag from zero up, or choose \u201Cmore than\u201D if the exact total doesn\u2019t matter for your plan.',
   },
   savingsMix: {
     title: "Money allocation",
@@ -86,6 +88,10 @@ const STEPS: Record<StepKey, { title: string; hint?: string }> = {
   mortgage: {
     title: "Housing",
     hint: "How does rent or mortgage fit in your budget?",
+  },
+  email: {
+    title: "Save & get monthly check-ins",
+    hint: "Enter your email to save a link to your dashboard and receive a calm monthly update. No password needed — we'll send you a link.",
   },
 };
 
@@ -116,7 +122,7 @@ const PRIMARY_FEAR_OPTIONS: { value: PrimaryFear; label: string }[] = [
 const MORTGAGE_OPTIONS = [
   {
     value: "housing_clear",
-    label: "Rent or own outright — housing isn’t a major strain",
+    label: "Rent or own outright — housing isn't a major strain",
   },
   {
     value: "housing_ok",
@@ -212,11 +218,12 @@ const EMPTY: FormData = {
   incomeStability: "",
   primaryFear: "",
   mortgage: "",
+  email: "",
 };
 
 /**
- * Shared ramp: 0..rampMax-1 = linear scale; rampMax = top “more than” step
- * (income, total savings) or “above ~42%” (save monthly).
+ * Shared ramp: 0..rampMax-1 = linear scale; rampMax = top "more than" step
+ * (income, total savings) or "above ~42%" (save monthly).
  */
 const ONBOARDING_SLIDER_RAMP_MAX = 5000;
 
@@ -277,6 +284,7 @@ export default function Onboarding() {
         label: o.label,
       })),
       mortgage: [...MORTGAGE_OPTIONS],
+      email: [],
     };
   }, []);
 
@@ -295,9 +303,12 @@ export default function Onboarding() {
   const currentKey = visible[safeIndex] ?? "country";
   const value = data[currentKey];
   const options = optionsByStep[currentKey];
+  const isEmailStep = currentKey === "email";
   const isLast = safeIndex === visible.length - 1;
-  const totalSteps = visible.length;
-  const progressPct = ((safeIndex + 1) / totalSteps) * 100;
+  // Email step is always optional — "mortgage" is the last required step.
+  const isMortgageLast = currentKey === "mortgage";
+  const totalSteps = visible.length - 1; // email step is a bonus, not counted
+  const progressPct = Math.min(100, ((safeIndex + 1) / totalSteps) * 100);
 
   const totalSavingsEstimate = useMemo(() => {
     const cur = countryMeta(countryKey).currency;
@@ -471,8 +482,8 @@ export default function Onboarding() {
     setError(null);
   }
 
-  async function submitProfile() {
-    const payload = {
+  async function submitProfile(email?: string) {
+    const payload: Record<string, string> = {
       income: data.income,
       savings: data.savings,
       savingsRate: data.savingsRate,
@@ -482,6 +493,7 @@ export default function Onboarding() {
       mortgagePressure: data.mortgage,
       primaryFear: data.primaryFear || "making_mistake",
     };
+    if (email) payload.email = email;
 
     setSaving(true);
     setError(null);
@@ -519,13 +531,29 @@ export default function Onboarding() {
   }
 
   function next() {
-    if (!value) return;
+    if (!value && !isEmailStep) return;
+
+    if (isEmailStep) {
+      // Email step: "Save & see my situation" with optional email
+      void submitProfile(data.email.trim() || undefined);
+      return;
+    }
+
+    if (isMortgageLast) {
+      // After mortgage, advance to email step
+      setStepKey("email");
+      return;
+    }
 
     if (!isLast) {
       setStepKey(visible[safeIndex + 1]);
       return;
     }
     void submitProfile();
+  }
+
+  function skipEmail() {
+    void submitProfile(undefined);
   }
 
   function back() {
@@ -535,9 +563,15 @@ export default function Onboarding() {
   const meta = STEPS[currentKey];
   const primaryLabel = saving
     ? "Saving\u2026"
-    : isLast
-      ? "See my situation"
-      : "Continue";
+    : isEmailStep
+      ? data.email.trim()
+        ? "Save & see my situation"
+        : "Skip — see my situation"
+      : isMortgageLast
+        ? "Continue"
+        : isLast
+          ? "See my situation"
+          : "Continue";
 
   const renderStepBody = () => {
     if (currentKey === "country") {
@@ -597,7 +631,7 @@ export default function Onboarding() {
             </p>
             <p className="mt-2 text-center text-xs text-slate-500">
               {openEnded
-                ? "We’ll treat this as a high earn band—precision isn’t needed here."
+                ? "We'll treat this as a high earn band—precision isn't needed here."
                 : "Take-home after tax, typical month."}
             </p>
           </div>
@@ -663,7 +697,7 @@ export default function Onboarding() {
             </p>
             <p className="mt-2 text-center text-xs text-slate-500">
               {openEnded
-                ? "We’ll use a strong saver rate—exact % doesn’t need to be precise."
+                ? "We'll use a strong saver rate—exact % doesn't need to be precise."
                 : "Estimated range at your income band, after tax."}
             </p>
           </div>
@@ -718,7 +752,7 @@ export default function Onboarding() {
             </p>
             <p className="mt-2 text-center text-xs text-slate-500">
               {openEnded
-                ? "We’ll treat this as a large nest egg—precision isn’t needed here."
+                ? "We'll treat this as a large nest egg—precision isn't needed here."
                 : "Cash plus investments you count as savings."}
             </p>
           </div>
@@ -837,6 +871,37 @@ export default function Onboarding() {
       );
     }
 
+    if (currentKey === "email") {
+      return (
+        <div className="mt-8 space-y-4">
+          <input
+            type="email"
+            value={data.email}
+            onChange={(e) => setData((prev) => ({ ...prev, email: e.target.value }))}
+            placeholder="you@example.com"
+            className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-3.5 text-sm text-slate-900 outline-none ring-emerald-500/30 placeholder:text-slate-400 focus:border-emerald-400 focus:ring-2"
+            autoComplete="email"
+            inputMode="email"
+            aria-label="Email address"
+          />
+          <ul className="space-y-2 text-sm leading-relaxed text-slate-500">
+            <li className="flex gap-2">
+              <span className="mt-1 text-emerald-600">✓</span>
+              Monthly check-in email with your latest status
+            </li>
+            <li className="flex gap-2">
+              <span className="mt-1 text-emerald-600">✓</span>
+              A link back to your dashboard any time
+            </li>
+            <li className="flex gap-2">
+              <span className="mt-1 text-emerald-600">✓</span>
+              No password, no spam — one email per month
+            </li>
+          </ul>
+        </div>
+      );
+    }
+
     return (
       <div className="mt-8 space-y-3">
         {options.map((opt) => (
@@ -858,11 +923,13 @@ export default function Onboarding() {
   };
 
   const canContinue =
-    currentKey === "country"
-      ? value !== "" && VALID_COUNTRY_CODES.has(value)
-      : currentKey === "savingsMix"
-        ? value !== "" && alloc[0] + alloc[1] === 100
-        : value !== "";
+    currentKey === "email"
+      ? true // always can proceed (email is optional)
+      : currentKey === "country"
+        ? value !== "" && VALID_COUNTRY_CODES.has(value)
+        : currentKey === "savingsMix"
+          ? value !== "" && alloc[0] + alloc[1] === 100
+          : value !== "";
 
   return (
     <main className="pb-8">
@@ -874,7 +941,7 @@ export default function Onboarding() {
       </div>
 
       <p className="fc-eyebrow mt-4">
-        Step {safeIndex + 1} of {totalSteps}
+        {isEmailStep ? "Almost done" : `Step ${safeIndex + 1} of ${totalSteps}`}
       </p>
 
       <div className="fc-onboarding-card mt-5">
