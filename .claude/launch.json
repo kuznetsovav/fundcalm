@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Next.js dev",
+      "runtimeExecutable": "/usr/local/bin/node",
+      "runtimeArgs": ["/Users/anton/Documents/fundcalm/node_modules/.bin/next", "dev", "--cwd", "/Users/anton/Documents/fundcalm"],
+      "port": 3000
+    }
+  ]
+}
