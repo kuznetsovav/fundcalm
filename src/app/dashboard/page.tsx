@@ -704,9 +704,10 @@ function ClarityView({
 export default async function Dashboard({
   searchParams,
 }: {
-  searchParams: Record<string, string | string[] | undefined>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const resolved = await resolveDashboardData(searchParams);
+  const sp = await searchParams;
+  const resolved = await resolveDashboardData(sp);
   const input = resolved?.financial ?? null;
   const onboarding = resolved?.onboarding ?? null;
   const result = input ? getFinancialStatus(input) : null;
