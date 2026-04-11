@@ -98,13 +98,21 @@ export async function saveUserProfile(
       .from("users")
       .upsert({ id: uid, email: input.email ?? null }, { onConflict: "id" });
     if (error) throw new Error(`User upsert failed: ${error.message}`);
-  } else {
-    const row: Record<string, unknown> = {};
-    if (input.email) row.email = input.email;
-
+  } else if (input.email) {
+    // Upsert on email so repeat sign-ups with the same address return the
+    // existing user row instead of hitting the unique constraint.
     const { data, error } = await sb
       .from("users")
-      .insert(row)
+      .upsert({ email: input.email }, { onConflict: "email" })
+      .select("id")
+      .single();
+    if (error) throw new Error(`User upsert failed: ${error.message}`);
+    uid = data.id as string;
+  } else {
+    // No email — just insert an anonymous user row.
+    const { data, error } = await sb
+      .from("users")
+      .insert({})
       .select("id")
       .single();
     if (error) throw new Error(`User insert failed: ${error.message}`);
