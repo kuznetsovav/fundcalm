@@ -1,5 +1,6 @@
 import {
   Diagnosis,
+  computeTargetRunway,
   type FinancialInput,
   type FinancialMetrics,
   type FinancialResult,
@@ -50,7 +51,12 @@ const MORTGAGE_LABEL: Record<OnboardingInput["mortgagePressure"], string> = {
   housing_heavy: "Housing is a serious squeeze",
 };
 
-export type ProfileRowDisplay = { label: string; value: string };
+export type ProfileRowDisplay = {
+  label: string;
+  value: string;
+  /** Onboarding field key for inline editing — undefined means not directly editable. */
+  field?: string;
+};
 
 function fmtShort(
   n: number,
@@ -90,14 +96,23 @@ export function onboardingAnswersForDisplay(
       label: "Total savings (range)",
       value: savingsBracketDescription(o.country, o.savings),
     },
-    { label: "Money allocation", value: MIX_LABEL[o.savingsMix] },
-    { label: "Main concern", value: STABILITY_LABEL[o.incomeStability] },
-    { label: "Mortgage / housing", value: MORTGAGE_LABEL[o.mortgagePressure] },
+    { label: "Money allocation", value: MIX_LABEL[o.savingsMix], field: "savingsMix" },
+    {
+      label: "Income pattern",
+      value: STABILITY_LABEL[o.incomeStability],
+      field: "incomeStability",
+    },
+    {
+      label: "Mortgage / housing",
+      value: MORTGAGE_LABEL[o.mortgagePressure],
+      field: "mortgagePressure",
+    },
     ...(o.primaryFear
       ? [
           {
             label: "Main worry",
             value: PRIMARY_FEAR_LABEL[o.primaryFear],
+            field: "primaryFear",
           },
         ]
       : []),
@@ -165,7 +180,7 @@ export function financialEstimatesForDisplay(
       value: `${runway} mo`,
     },
     {
-      label: "Six-month cash target",
+      label: `${computeTargetRunway(input.incomeStability, input.debtPressure)}-month cash target`,
       value: fmtCurrency(metrics.required_cash, currency, locale),
     },
     { label: "Gap vs target", value: gapLabel },

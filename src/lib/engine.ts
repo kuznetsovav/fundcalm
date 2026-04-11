@@ -22,6 +22,7 @@ import {
   buildResponse,
   classifyUser,
   calculateConfidence,
+  computeTargetRunway,
   deriveMetrics,
   defaultConfidenceModel,
   Diagnosis,
@@ -52,6 +53,7 @@ export {
   classifyUser,
   buildResponse,
   deriveMetrics,
+  computeTargetRunway,
   calculateConfidence,
   generateSensitivity,
   defaultConfidenceModel,
@@ -167,7 +169,7 @@ const SAFE_FALLBACK: FinancialResult = {
   verdict: "We need clearer numbers before this can be useful.",
   summary:
     "Some inputs look inconsistent. Update onboarding with realistic spending and savings.",
-  metrics: { runway: "—", target: "6 months", gap: "—" },
+  metrics: { runway: "—", target: "—", gap: "—" },
   insight:
     "Without solid numbers, any read would be a guess. That is not what you want here.",
   projection:
@@ -335,6 +337,8 @@ function evaluate(input: FinancialInput): FinancialResult {
     monthly_expenses: input.monthly_expenses,
     cash_amount: input.cash_amount,
     investments_amount: input.investments_amount,
+    incomeStability: input.incomeStability,
+    debtPressure: input.debtPressure,
   });
 
   const diagnosis = classifyUser(derived);

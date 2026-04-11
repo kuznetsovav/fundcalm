@@ -134,6 +134,29 @@ const INCOME_CAP_USD: Record<IncomeRange, number> = {
   gt16k: 16_000,
 };
 
+/**
+ * Low and high bounds of an income tier in local currency (for range display).
+ * The high bound is the cap of the tier; the low bound is the previous tier's cap.
+ */
+export function incomeTierBoundsLocal(
+  currency: string,
+  tier: IncomeRange,
+): { lo: number; hi: number } {
+  const s = scaleFor(currency);
+  if (tier === "lt2k") return { lo: 0, hi: Math.round(INCOME_CAP_USD.lt2k * s) };
+  if (tier === "gt16k") {
+    const floor = Math.round(INCOME_CAP_USD["11k-16k"] * s);
+    return { lo: floor, hi: floor * 2 };
+  }
+  const idx = INCOME_TIER_ORDER.indexOf(tier);
+  const prevCapUsd = idx <= 0 ? 0 : INCOME_CAP_USD[INCOME_TIER_ORDER[idx - 1]!];
+  const hiUsd = INCOME_CAP_USD[tier];
+  return {
+    lo: Math.round(prevCapUsd * s),
+    hi: Math.round(hiUsd * s),
+  };
+}
+
 /** Human-readable bracket for onboarding lists (localized currency). */
 export function incomeBracketDescription(
   countryCode: string,

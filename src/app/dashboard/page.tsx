@@ -29,7 +29,10 @@ import {
 } from "@/lib/dashboard-attention";
 import CollapsibleSection from "./collapsible-section";
 import { currencyLocaleFromCountryCode } from "@/lib/money-tiers";
-import { economicOverviewForCountry } from "@/lib/economic-context";
+import {
+  economicOverviewForCountry,
+  illustrativeInflationRate,
+} from "@/lib/economic-context";
 import { projectSavingsYears } from "@/lib/wealth-projection";
 import { VALID_COUNTRY_CODES } from "@/lib/countries";
 import {
@@ -40,8 +43,59 @@ import {
   coerceSavingsRange,
 } from "@/lib/onboarding-legacy";
 import Explanation from "./explanation";
+import EditableProfileRows from "./editable-profile-rows";
 
 export const metadata = { title: "Your clarity — FundCalm" };
+
+const FEAR_LABEL: Record<string, string> = {
+  income_loss: "Worried about income stopping or dropping",
+  market_crash: "Worried about a big drop in invested savings",
+  making_mistake: "Worried about doing the wrong thing with money",
+  missing_opportunities: "Worried about missing growth opportunities",
+};
+
+/** Extra fear-specific bullets that expand the "Given your main worry" section. */
+function fearExtraBullets(
+  fear: string,
+  aboveTarget: boolean,
+  hasInvestments: boolean,
+): string[] {
+  if (fear === "income_loss") {
+    return [
+      `Your cash runway is the first line of defence if income drops — ${aboveTarget ? "you're above your target buffer, which means you have meaningful breathing room." : "building it toward your target is the most direct thing you can do for this worry."}`,
+      "A buffer equal to your target months of expenses means you can handle a gap without touching investments or taking on debt.",
+      "If income varies, keeping the buffer a little above target gives extra margin during slow patches.",
+    ];
+  }
+  if (fear === "market_crash") {
+    return [
+      hasInvestments
+        ? "A market drop affects your invested portion — your cash buffer is what keeps daily life funded without forcing you to sell at a bad time."
+        : "With little or no investments, a market crash affects you less directly — your main risk is inflation eroding the purchasing power of your cash.",
+      aboveTarget
+        ? "With your cash above target, you have a solid cushion before any invested savings would need to be touched."
+        : "A thin cash layer means a market drop could put pressure on you to sell investments at the worst moment — the buffer is your protection.",
+      "Cash and investments serve different jobs: cash for near-term spending, investments for long-run growth — keeping them separate mentally reduces panic decisions.",
+    ];
+  }
+  if (fear === "making_mistake") {
+    return [
+      "The most common mistake is acting impulsively — either moving too much money at once or freezing and doing nothing.",
+      aboveTarget
+        ? "Your numbers look reasonably structured — your job right now is to stay the course rather than overhaul."
+        : "The clearest next step is building cash toward your target — it's simple, reversible, and hard to get wrong.",
+      "Checking the same dashboard every week and worrying about small changes is often more damaging than the underlying numbers — steady habits matter more than timing.",
+    ];
+  }
+  // missing_opportunities
+  return [
+    aboveTarget
+      ? "With your buffer in place, you're in a good position to think about longer-term growth — but only for money you genuinely don't need for years."
+      : "The first opportunity to act on is building the cash buffer — a gap here creates real opportunity cost (forced sales, stress decisions) that outweighs potential investment gains.",
+    "Opportunity cost cuts both ways: money sitting in excess cash after the buffer is full is giving up potential growth; money invested before the buffer is full is giving up stability.",
+    "Small, regular additions to longer-term savings (once the buffer is solid) capture compound growth without requiring perfect timing.",
+  ];
+}
 
 const DIAGNOSIS_LABEL: Record<Diagnosis, string> = {
   [Diagnosis.CriticalBuffer]: "Critical buffer",
@@ -239,8 +293,11 @@ function projectionBullets(
     ];
   }
   if (metrics.gap <= 0) {
+    const targetMonths = input.monthly_expenses > 0
+      ? Math.round(metrics.required_cash / input.monthly_expenses)
+      : 6;
     return [
-      `${Math.round(metrics.runway * 10) / 10} months in cash — on track for the six-month target.`,
+      `${Math.round(metrics.runway * 10) / 10} months in cash — on track for the ${targetMonths}-month target.`,
     ];
   }
   const monthsToClose = Math.ceil(metrics.gap / savePerMonth);
@@ -256,7 +313,7 @@ function projectionBullets(
   if (capped === 120 && projectedCash < metrics.required_cash) {
     return [
       first,
-      "At this pace, cash could still sit below a six-month cushion after ten years—worth revisiting income, spending, or how much you can save.",
+      "At this pace, cash could still sit below your target cushion after ten years—worth revisiting income, spending, or how much you can save.",
     ];
   }
 
@@ -317,6 +374,7 @@ function ClarityView({
   countryCode,
   suggestionLines,
   explainContext,
+  editableParams,
 }: {
   result: FinancialResult;
   input: FinancialInput;
@@ -324,11 +382,14 @@ function ClarityView({
   countryCode: string;
   suggestionLines: string[];
   explainContext?: string;
+  /** Raw URL param values for building inline-edit navigation URLs. */
+  editableParams: Record<string, string>;
 }) {
   const { currency, locale } = currencyLocaleFromCountryCode(countryCode);
   const m = result.financialMetrics;
   const macro = economicOverviewForCountry(countryCode);
-  const yearProjections = projectSavingsYears(input, 5);
+  const inflationRate = illustrativeInflationRate(countryCode);
+  const yearProjections = projectSavingsYears(input, 5, inflationRate);
   const hero = STATUS_HERO[result.status];
   const savePerMonth = input.monthly_income_estimate * input.monthly_savings_rate;
   const projLines = projectionBullets(input, savePerMonth, m);
@@ -505,13 +566,25 @@ function ClarityView({
           </p>
         )}
 
-        <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3">
+        <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-4">
           <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
-            Given your main worry
+            {FEAR_LABEL[input.primary_fear] ?? "Given your main worry"}
           </p>
-          <p className="mt-2 text-sm leading-relaxed text-slate-700">
+          <p className="mt-2 text-sm font-medium leading-relaxed text-slate-800">
             {result.projection}
           </p>
+          <ul className="mt-3 space-y-2 border-t border-slate-200/60 pt-3">
+            {fearExtraBullets(
+              input.primary_fear,
+              m.gap <= 0,
+              input.hasInvestments,
+            ).map((line) => (
+              <li key={line} className="flex gap-2 text-sm leading-relaxed text-slate-600">
+                <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-slate-400" />
+                {line}
+              </li>
+            ))}
+          </ul>
         </div>
 
         <h3 className="mt-8 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
@@ -519,23 +592,27 @@ function ClarityView({
         </h3>
         <p className="mt-2 text-xs leading-relaxed text-slate-500">
           If your estimated monthly savings continue. "With returns" applies a
-          conservative ~4% annual return to your invested portion only—both
-          figures are illustrative, not a forecast. Year-end totals include all
-          savings pots, not liquid cash alone.
+          conservative ~4% annual return to your invested portion only. "Real value"
+          deflates by ~{Math.round(inflationRate * 100)}% illustrative annual inflation
+          to show purchasing power — all figures are illustrative, not a forecast.
+          Year-end totals include all savings pots, not liquid cash alone.
         </p>
         <div className="mt-4 overflow-x-auto rounded-xl border border-gray-100">
-          <table className="w-full min-w-[280px] text-left text-sm">
+          <table className="w-full min-w-[320px] text-left text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50/80">
                 <th className="px-3 py-2.5 font-medium text-slate-500">Year</th>
                 <th className="px-3 py-2.5 font-medium text-slate-500">
-                  No returns
+                  Nominal
                 </th>
                 {input.hasInvestments && (
                   <th className="px-3 py-2.5 font-medium text-slate-500">
                     With ~4% returns
                   </th>
                 )}
+                <th className="px-3 py-2.5 font-medium text-slate-500">
+                  Real value
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -553,6 +630,15 @@ function ClarityView({
                       {fmtCurrency(row.balanceWithReturns, currency, locale)}
                     </td>
                   )}
+                  <td className="px-3 py-3 tabular-nums text-slate-500">
+                    {fmtCurrency(
+                      input.hasInvestments
+                        ? row.balanceWithReturnsReal
+                        : row.balanceReal,
+                      currency,
+                      locale,
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -659,19 +745,10 @@ function ClarityView({
             <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
               What you told us
             </h3>
-            <dl className="mt-3 space-y-3">
-              {profileRows.map((row) => (
-                <div
-                  key={row.label}
-                  className="flex flex-col gap-0.5 border-b border-gray-50 pb-3 last:border-0 sm:flex-row sm:justify-between sm:gap-4"
-                >
-                  <dt className="text-sm text-slate-500">{row.label}</dt>
-                  <dd className="text-sm font-medium text-slate-900">
-                    {row.value}
-                  </dd>
-                </div>
-              ))}
-            </dl>
+            <p className="mt-1 text-xs text-slate-400">
+              Tap "edit" on any row to update that answer and recalculate instantly.
+            </p>
+            <EditableProfileRows rows={profileRows} currentValues={editableParams} />
           </div>
           <div>
             <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
@@ -734,6 +811,20 @@ export default async function Dashboard({
         ? financialResultToContextText(result, undefined, explainNumeric)
         : undefined;
 
+  // Build a flat string map of current onboarding params for inline editing.
+  const editableParams: Record<string, string> = onboarding
+    ? {
+        income: onboarding.income,
+        savings: onboarding.savings,
+        savingsRate: onboarding.savingsRate,
+        country: onboarding.country,
+        savingsMix: onboarding.savingsMix,
+        incomeStability: onboarding.incomeStability,
+        mortgage: onboarding.mortgagePressure,
+        primaryFear: onboarding.primaryFear ?? "making_mistake",
+      }
+    : {};
+
   return (
     <main className="pb-10 pt-2">
       {result && onboarding && input ? (
@@ -744,6 +835,7 @@ export default async function Dashboard({
           countryCode={onboarding.country}
           suggestionLines={suggestionLines}
           explainContext={explainContext}
+          editableParams={editableParams}
         />
       ) : (
         <EmptyState />
