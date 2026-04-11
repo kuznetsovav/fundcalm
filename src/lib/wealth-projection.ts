@@ -7,6 +7,10 @@ export interface YearProjection {
   balance: number;
   /** With a conservative annual return applied to the invested portion. */
   balanceWithReturns: number;
+  /** Nominal balance deflated by cumulative inflation — purchasing-power view. */
+  balanceReal: number;
+  /** balanceWithReturns deflated by cumulative inflation. */
+  balanceWithReturnsReal: number;
 }
 
 /** Conservative annual return rate applied to the invested portion only. */
@@ -15,11 +19,14 @@ const CONSERVATIVE_ANNUAL_RETURN = 0.04;
 /**
  * Savings accumulation with and without a conservative return on investments.
  * The "with returns" figure applies the return only to invested savings, not cash.
- * Both projections are illustrative only.
+ * Adds real (inflation-adjusted) variants using the provided illustrative rate.
+ * All figures are illustrative only, not a forecast.
  */
 export function projectSavingsYears(
   input: FinancialInput,
   years: number,
+  /** Illustrative annual inflation rate — used for real-value column only. */
+  inflationRate = 0.03,
 ): YearProjection[] {
   const monthlySave = Math.max(
     0,
@@ -43,11 +50,16 @@ export function projectSavingsYears(
     investedBalance += investedSave;
     balanceWithReturns = input.cash_amount + cashSave * y + investedBalance;
 
+    // Real (inflation-adjusted) purchasing power — deflate by cumulative inflation.
+    const realFactor = Math.pow(1 - inflationRate, y);
+
     out.push({
       yearOffset: y,
       label: String(y0 + y),
       balance: Math.round(balance),
       balanceWithReturns: Math.round(balanceWithReturns),
+      balanceReal: Math.round(balance * realFactor),
+      balanceWithReturnsReal: Math.round(balanceWithReturns * realFactor),
     });
   }
 

@@ -71,10 +71,6 @@ export function coerceMortgagePressure(raw: string): MortgagePressure | null {
   return LEGACY_MORTGAGE[raw] ?? null;
 }
 
-const LEGACY_STABILITY: Record<string, IncomeStability> = {
-  somewhat_variable: "variable_flat",
-};
-
 export function coerceIncomeStability(raw: string): IncomeStability | null {
   const allowed = new Set<string>([
     "steady",
@@ -84,5 +80,5 @@ export function coerceIncomeStability(raw: string): IncomeStability | null {
     "irregular",
   ]);
   if (allowed.has(raw)) return raw as IncomeStability;
-  return LEGACY_STABILITY[raw] ?? null;
+  return null;
 }

@@ -96,13 +96,11 @@ export interface ConfidenceModelInput {
 
 const REASON_HIGH =
   "High confidence — your inputs give a clear picture.";
-const REASON_MEDIUM =
-  "Medium confidence — some estimates may affect accuracy.";
 const REASON_LOW = "Low confidence — missing or unclear inputs.";
 const REASON_LOW_MISMATCH =
-  "Low confidence — totals and splits you entered don't line up well.";
+  "Low confidence — totals and splits you entered don't line up well; revisiting 'Money allocation' in onboarding would sharpen this.";
 const REASON_LOW_SPEND =
-  "Low confidence — spending is higher than income in your entries.";
+  "Low confidence — spending is higher than income in your entries; check the income and savings-rate steps.";
 
 function totalAssets(inp: ConfidenceModelInput): number {
   return inp.cash_amount + inp.investments_amount;
@@ -124,6 +122,7 @@ export function calculateConfidence(
 ): ConfidenceResult {
   const r = derived.runway_months;
   const invR = derived.investments_ratio;
+  const target = derived.target_runway_months;
   const mismatch = savingsMismatchRatio(input);
 
   if (input.monthly_expenses > input.monthly_income_estimate) {
@@ -131,7 +130,11 @@ export function calculateConfidence(
   }
 
   if (input.cash_amount === 0 && input.investments_amount > 0) {
-    return { level: "low", reason: REASON_LOW };
+    return {
+      level: "low",
+      reason:
+        "Low confidence — no cash was entered with investments present; confirm your cash amount in onboarding.",
+    };
   }
 
   if (input.savings_total >= 2_000 && mismatch > 0.35) {
@@ -139,26 +142,42 @@ export function calculateConfidence(
   }
 
   if (input.savings_total >= 2_000 && mismatch >= 0.12 && mismatch <= 0.35) {
-    return { level: "medium", reason: REASON_MEDIUM };
+    return {
+      level: "medium",
+      reason:
+        "Medium confidence — your total savings and the cash/investment split don't quite align; refining 'Money allocation' in onboarding would tighten the read.",
+    };
   }
 
-  if (
-    (r > 2.75 && r < 3.25) ||
-    (r > 5.75 && r < 6.25)
-  ) {
-    return { level: "medium", reason: REASON_MEDIUM };
+  if (r > (target - 0.25) && r < (target + 0.25)) {
+    return {
+      level: "medium",
+      reason: `Medium confidence — your cash runway is right on the ${target}-month boundary; a small change in spending or savings could shift the diagnosis.`,
+    };
   }
 
-  if (
-    r < 3 &&
-    invR >= 0.55 &&
-    invR <= 0.65
-  ) {
-    return { level: "medium", reason: REASON_MEDIUM };
+  if (r > 2.75 && r < 3.25) {
+    return {
+      level: "medium",
+      reason:
+        "Medium confidence — your runway is near the 3-month boundary; small changes in spending or cash shift the diagnosis.",
+    };
+  }
+
+  if (r < 3 && invR >= 0.55 && invR <= 0.65) {
+    return {
+      level: "medium",
+      reason:
+        "Medium confidence — thin cash with significant investments means the label could flip with a small adjustment to your mix.",
+    };
   }
 
   if (r > 84) {
-    return { level: "medium", reason: REASON_MEDIUM };
+    return {
+      level: "medium",
+      reason:
+        "Medium confidence — very high savings relative to expenses; estimates are wider when totals are large.",
+    };
   }
 
   return { level: "high", reason: REASON_HIGH };
@@ -207,10 +226,11 @@ export function generateSensitivity(
   switch (diagnosis) {
     case Diagnosis.CriticalBuffer:
     case Diagnosis.InsufficientBuffer:
-    case Diagnosis.LimitedBuffer:
+    case Diagnosis.LimitedBuffer: {
+      const tgt = derived.target_runway_months;
       if (gap > 0) {
         out.push(
-          `Adding about ${fmt(stepCash)} in cash you can use soon moves you toward the six-month cushion.`,
+          `Adding about ${fmt(stepCash)} in cash you can use soon moves you toward your ${tgt}-month cushion.`,
         );
         if (trim > 0) {
           const addM = runwayGainMonths(cash, exp, trim);
@@ -228,18 +248,17 @@ export function generateSensitivity(
         "A steady bump in income that you bank as cash shortens the time to a full cushion.",
       );
       break;
+    }
 
     case Diagnosis.Overinvested: {
-      const shift = Math.min(
-        inv * 0.15,
-        Math.max(gap, Math.round(inv * 0.05)),
-      );
+      const tgt = derived.target_runway_months;
+      const shift = Math.min(inv * 0.15, Math.max(gap, Math.round(inv * 0.05)));
       const shiftRounded = Math.max(500, Math.round(shift));
       out.push(
         `Moving about ${fmt(shiftRounded)} from longer-term savings into everyday cash over time lifts liquidity.`,
       );
       out.push(
-        `Building cash toward about ${fmt(req)} matches the six-month rule we use here.`,
+        `Building cash toward about ${fmt(req)} matches the ${tgt}-month target for your profile.`,
       );
       out.push(
         "Trimming spending while you add to cash speeds the shift without forced sales.",
@@ -266,6 +285,7 @@ export function generateSensitivity(
     }
 
     case Diagnosis.BalancedButIdle: {
+      const tgt = derived.target_runway_months;
       const add = Math.max(1_000, Math.round(totalAssets(input) * 0.05));
       out.push(
         `Adding about ${fmt(add)} to longer-term savings over the next year tilts the mix without touching your cushion.`,
@@ -274,12 +294,13 @@ export function generateSensitivity(
         "A drop in income or a jump in spending could shrink runway enough to change this label.",
       );
       out.push(
-        "Large one-off costs paid from cash can temporarily pull you below six months.",
+        `Large one-off costs paid from cash can temporarily pull you below ${tgt} months.`,
       );
       break;
     }
 
-    case Diagnosis.Healthy:
+    case Diagnosis.Healthy: {
+      const tgt = derived.target_runway_months;
       if (trim > 0) {
         const loss = runwayLossFromHigherSpending(cash, exp, trim);
         if (loss > 0) {
@@ -289,34 +310,70 @@ export function generateSensitivity(
         }
       }
       out.push(
-        "Losing income or adding fixed costs can move you below six months of cash faster than it feels.",
+        `Losing income or adding fixed costs can move you below ${tgt} months of cash faster than it feels.`,
       );
       out.push(
         "Moving a big slice of cash into longer-term savings at once could flip you toward thin cash if bills stay the same.",
       );
       break;
+    }
   }
 
   return out.filter(Boolean).slice(0, 4);
 }
 
-const TARGET_RUNWAY = 6;
+/**
+ * Personalised cash-runway target based on income stability and housing pressure.
+ *
+ * Profile → target months:
+ *   Steady + light housing  → 4
+ *   Steady + heavy housing  → 6
+ *   Variable income         → 7
+ *   Variable + heavy housing→ 8
+ *   Irregular income        → 8
+ *   Irregular + heavy housing → 10
+ */
+export function computeTargetRunway(
+  incomeStability?: string,
+  debtPressure?: string,
+): number {
+  const irregular = incomeStability === "irregular";
+  const variable =
+    !irregular &&
+    (incomeStability === "variable_flat" ||
+      incomeStability === "variable_improving" ||
+      incomeStability === "variable_worsening");
+  const heavy = debtPressure === "heavy" || debtPressure === "moderate";
+
+  if (irregular && heavy) return 10;
+  if (irregular) return 8;
+  if (variable && heavy) return 8;
+  if (variable) return 7;
+  if (heavy) return 6;
+  return 4;
+}
 
 export function deriveMetrics(input: {
   monthly_expenses: number;
   cash_amount: number;
   investments_amount: number;
+  /** Optional — used to personalise the cash-runway target. */
+  incomeStability?: string;
+  /** Optional — used to personalise the cash-runway target. */
+  debtPressure?: string;
 }): DiagnosisDerived {
   const liquid_savings = input.cash_amount;
   const monthly_expenses = input.monthly_expenses;
   const runway_months = liquid_savings / monthly_expenses;
-  const total_assets =
-    input.cash_amount + input.investments_amount;
-  const cash_ratio =
-    total_assets > 0 ? input.cash_amount / total_assets : 1;
+  const total_assets = input.cash_amount + input.investments_amount;
+  const cash_ratio = total_assets > 0 ? input.cash_amount / total_assets : 1;
   const investments_ratio =
     total_assets > 0 ? input.investments_amount / total_assets : 0;
-  const required_cash = monthly_expenses * TARGET_RUNWAY;
+  const target_runway_months = computeTargetRunway(
+    input.incomeStability,
+    input.debtPressure,
+  );
+  const required_cash = monthly_expenses * target_runway_months;
   const gap = required_cash - liquid_savings;
 
   return {
@@ -325,7 +382,7 @@ export function deriveMetrics(input: {
     total_assets,
     cash_ratio,
     investments_ratio,
-    target_runway_months: TARGET_RUNWAY,
+    target_runway_months,
     required_cash,
     gap,
   };
@@ -333,19 +390,21 @@ export function deriveMetrics(input: {
 
 /**
  * Mutually exclusive diagnosis; first matching rule wins.
+ * Uses the personalised target_runway_months from derived metrics.
  */
 export function classifyUser(derived: DiagnosisDerived): Diagnosis {
   const r = derived.runway_months;
   const inv = derived.investments_ratio;
   const cashR = derived.cash_ratio;
+  const target = derived.target_runway_months;
 
   if (r < 1) return Diagnosis.CriticalBuffer;
   if (r < 3 && inv > 0.6) return Diagnosis.Overinvested;
   if (r >= 1 && r < 3) return Diagnosis.InsufficientBuffer;
-  if (r >= 3 && r < 6) return Diagnosis.LimitedBuffer;
-  if (r >= 6 && cashR > 0.7) return Diagnosis.TooConservative;
-  if (r >= 6 && inv < 0.3) return Diagnosis.BalancedButIdle;
-  if (r >= 6 && inv >= 0.3 && inv <= 0.7) return Diagnosis.Healthy;
+  if (r >= 3 && r < target) return Diagnosis.LimitedBuffer;
+  if (r >= target && cashR > 0.7) return Diagnosis.TooConservative;
+  if (r >= target && inv < 0.3) return Diagnosis.BalancedButIdle;
+  if (r >= target && inv >= 0.3 && inv <= 0.7) return Diagnosis.Healthy;
   return Diagnosis.Healthy;
 }
 
@@ -403,7 +462,7 @@ function projectionFor(
       diagnosis === Diagnosis.Healthy || diagnosis === Diagnosis.TooConservative
         ? "Nothing here says you chose wrong—only how your numbers line up with a simple cushion rule."
         : "The setup is readable: more cash months first, then room to think about longer-term growth.";
-    return `We use six months of spending in cash as a comfort line. You are ${gapUp ? "below" : "at or above"} that line for cash. ${b}`;
+    return `We target ${ctx.target_runway_months} months of spending in cash as a comfort line for your profile. You are ${gapUp ? "below" : "at or above"} that line for cash. ${b}`;
   }
 
   // missing_opportunities
@@ -440,14 +499,15 @@ function summaryFor(diagnosis: Diagnosis, ctx: DiagnosisBuildContext): string {
   const r = roundRunway(ctx.runway_months);
   const fmt = ctx.fmtMoney;
   const need = fmt(ctx.required_cash);
+  const target = ctx.target_runway_months;
 
   if (ctx.gap > 0) {
-    return `You can cover about ${r} months of expenses with cash. Recommended level is 6 months; you're short by about ${fmt(ctx.gap)} (target cash about ${need}).`;
+    return `Your ${fmt(ctx.liquid_savings)} in cash covers about ${r} months of expenses. We target ${target} months (${need}) for your income pattern — you're short by about ${fmt(ctx.gap)}.`;
   }
   if (ctx.gap < 0) {
-    return `You can cover about ${r} months of expenses with cash. Recommended level is 6 months; you're about ${fmt(-ctx.gap)} above that target.`;
+    return `Your ${fmt(ctx.liquid_savings)} in cash covers about ${r} months of expenses. We target ${target} months (${need}) for your income pattern — you're about ${fmt(-ctx.gap)} above that.`;
   }
-  return `You can cover about ${r} months of expenses with cash. Recommended level is 6 months; you're on target for that cushion.`;
+  return `Your ${fmt(ctx.liquid_savings)} in cash covers about ${r} months of expenses. We target ${target} months (${need}) for your income pattern — you're right on target.`;
 }
 
 function metricsStrings(ctx: DiagnosisBuildContext): DiagnosisResponse["metrics"] {
@@ -456,7 +516,7 @@ function metricsStrings(ctx: DiagnosisBuildContext): DiagnosisResponse["metrics"
   const fmt = ctx.fmtMoney;
   return {
     runway: `About ${r} months`,
-    target: `${TARGET_RUNWAY} months`,
+    target: `${ctx.target_runway_months} months`,
     gap:
       gap > 0
         ? `About ${fmt(gap)} below target`
@@ -591,7 +651,7 @@ export const DIAGNOSIS_TEST_CASES: DiagnosisDerivationTestCase[] = [
     },
     expect: Diagnosis.Overinvested,
     expectConfidence: "high",
-    sensitivityMustInclude: ["Moving about", "six-month"],
+    sensitivityMustInclude: ["Moving about", "month target"],
   },
   {
     label: "low savings runway → insufficient_buffer",
@@ -633,7 +693,7 @@ export const DIAGNOSIS_TEST_CASES: DiagnosisDerivationTestCase[] = [
     label: "medium runway → limited_buffer",
     input: {
       monthly_expenses: 2_500,
-      cash_amount: 10_000,
+      cash_amount: 9_000,
       investments_amount: 15_000,
 
     },
@@ -655,16 +715,16 @@ export const DIAGNOSIS_TEST_CASES: DiagnosisDerivationTestCase[] = [
     expectConfidence: "low",
   },
   {
-    label: "near six-month runway boundary → medium confidence",
+    label: "near 4-month runway boundary (default target) → medium confidence",
     input: {
       monthly_expenses: 2_000,
-      cash_amount: 11_800,
+      cash_amount: 7_800,
       investments_amount: 2_000,
 
     },
     expect: Diagnosis.LimitedBuffer,
     expectConfidence: "medium",
-    sensitivityMustInclude: ["six-month"],
+    sensitivityMustInclude: ["month cushion"],
   },
   {
     label: "large savings total mismatch → low confidence",

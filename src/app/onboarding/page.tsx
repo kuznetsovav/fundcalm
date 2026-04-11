@@ -14,6 +14,7 @@ import {
   incomeFromSliderPosition,
   incomeOpenThresholdLocal,
   incomeSliderPositionFromTier,
+  incomeTierBoundsLocal,
   incomeTierFromLocalMonthly,
   incomeTierMid,
   nearestSavingsRateKey,
@@ -629,7 +630,6 @@ export default function Onboarding() {
       const cur = countryMeta(countryKey).currency;
       const inc =
         coerceIncomeRange(data.income) ?? ("4k-6k" as IncomeRange);
-      const incomeMid = incomeTierMid(cur, inc);
       const { rate, openEnded } = savingsRateFromSliderPosition(
         savingsRateSliderPos,
         SAVINGS_RATE_SLIDER_RAMP_MAX,
@@ -640,12 +640,17 @@ export default function Onboarding() {
       const displayPct = openEnded
         ? `More than ${Math.round(SAVINGS_RATE_SLIDER_RAMP_FRACTION * 100)}%`
         : `${pctWhole}%`;
-      const typicalMo = Math.round(
-        incomeMid *
-          (openEnded ? SAVINGS_RATE_SLIDER_RAMP_FRACTION : rate),
-      );
-      const displayMoney = moneyFmt.format(typicalMo);
-      const ariaText = `${displayPct} of take-home, about ${displayMoney} per month`;
+
+      // Show a range based on income tier bounds rather than a single midpoint.
+      const bounds = incomeTierBoundsLocal(cur, inc);
+      const effectiveRate = openEnded ? SAVINGS_RATE_SLIDER_RAMP_FRACTION : rate;
+      const loAmount = Math.round(bounds.lo * effectiveRate);
+      const hiAmount = Math.round(bounds.hi * effectiveRate);
+      const displayRange =
+        loAmount > 0
+          ? `${moneyFmt.format(loAmount)} – ${moneyFmt.format(hiAmount)} / mo`
+          : `Up to ${moneyFmt.format(hiAmount)} / mo`;
+      const ariaText = `${displayPct} of take-home, roughly ${displayRange}`;
 
       return (
         <div className="mt-8 space-y-6">
@@ -654,12 +659,12 @@ export default function Onboarding() {
               {displayPct}
             </p>
             <p className="mt-2 text-center text-sm font-medium tabular-nums text-slate-700">
-              ~{displayMoney} / mo typical at your income band
+              {displayRange}
             </p>
             <p className="mt-2 text-center text-xs text-slate-500">
               {openEnded
                 ? "We’ll use a strong saver rate—exact % doesn’t need to be precise."
-                : "Of take-home after tax."}
+                : "Estimated range at your income band, after tax."}
             </p>
           </div>
           <div className="fc-onboarding-range-wrap">
