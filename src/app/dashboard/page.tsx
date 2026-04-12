@@ -16,6 +16,12 @@ import {
 } from "@/lib/engine";
 import { getUserProfile, profileToOnboardingInput } from "@/lib/profiles";
 import { getLatestSnapshot, snapshotMonthLabel, type SnapshotRow } from "@/lib/snapshots";
+import {
+  computeStaleness,
+  applyStalenessPenalty,
+  estimateDrift,
+  computeBannerContent,
+} from "@/lib/staleness";
 import { financialResultToContextText } from "@/lib/explain";
 import {
   financialEstimatesForDisplay,
@@ -254,6 +260,7 @@ async function resolveDashboardData(
   financial: FinancialInput;
   userId?: string;
   snapshot?: SnapshotRow | null;
+  updatedAt?: string;
 } | null> {
   const userId = typeof sp.user === "string" ? sp.user : undefined;
   if (userId) {
@@ -264,7 +271,13 @@ async function resolveDashboardData(
       ]);
       if (row) {
         const onboarding = profileToOnboardingInput(row);
-        return { onboarding, financial: fromOnboarding(onboarding), userId, snapshot };
+        return {
+          onboarding,
+          financial: fromOnboarding(onboarding),
+          userId,
+          snapshot,
+          updatedAt: row.updated_at,
+        };
       }
     } catch {
       // Supabase unavailable — fall through
@@ -373,46 +386,58 @@ function EmptyState() {
   );
 }
 
-function DeltaBadge({ current, previous, label }: {
-  current: number;
-  previous: number;
-  label: string;
-}) {
-  const diff = Math.round((current - previous) * 10) / 10;
-  if (Math.abs(diff) < 0.1) return null;
-  const up = diff > 0;
-  return (
-    <span className={`inline-flex items-center gap-1 text-xs font-medium ${up ? "text-emerald-700" : "text-red-600"}`}>
-      <span>{up ? "↑" : "↓"}</span>
-      <span>{up ? "+" : ""}{diff} {label} since {label === "months" ? "" : ""}</span>
-    </span>
-  );
-}
+const BANNER_STYLES = {
+  default: {
+    wrap: "border border-gray-100 bg-gray-50/80",
+    text: "text-slate-700",
+    sub:  "text-slate-500",
+    btn:  "bg-emerald-600 hover:bg-emerald-700 text-white",
+  },
+  highlight: {
+    wrap: "border border-emerald-200 bg-emerald-50",
+    text: "text-emerald-900",
+    sub:  "text-emerald-700",
+    btn:  "bg-emerald-600 hover:bg-emerald-700 text-white",
+  },
+  urgent: {
+    wrap: "border border-amber-200 bg-amber-50",
+    text: "text-amber-900",
+    sub:  "text-amber-700",
+    btn:  "bg-amber-600 hover:bg-amber-700 text-white",
+  },
+} as const;
 
-function CheckinBanner({ userId, snapshot, checkinJustDone }: {
+function CheckinBanner({
+  userId,
+  checkinJustDone,
+  content,
+}: {
   userId: string;
-  snapshot?: SnapshotRow | null;
   checkinJustDone?: boolean;
+  content: import("@/lib/staleness").BannerContent;
 }) {
   if (checkinJustDone) {
     return (
-      <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">
         Numbers updated. Your dashboard has been recalculated.
       </div>
     );
   }
+
+  const s = BANNER_STYLES[content.variant];
   return (
-    <div className="flex items-center justify-between gap-3 rounded-xl border border-gray-100 bg-gray-50/80 px-4 py-3">
-      <p className="text-xs text-slate-500">
-        {snapshot
-          ? `Last check-in: ${snapshotMonthLabel(snapshot.taken_at)}`
-          : "Keep your numbers up to date for an accurate read."}
-      </p>
+    <div className={`flex items-start justify-between gap-3 rounded-xl px-4 py-3 ${s.wrap}`}>
+      <div className="min-w-0">
+        <p className={`text-xs font-medium leading-snug ${s.text}`}>{content.message}</p>
+        {content.sub && (
+          <p className={`mt-0.5 text-xs leading-relaxed ${s.sub}`}>{content.sub}</p>
+        )}
+      </div>
       <Link
         href={`/checkin?user=${userId}`}
-        className="shrink-0 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
+        className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold ${s.btn}`}
       >
-        Update numbers
+        {content.buttonLabel}
       </Link>
     </div>
   );
@@ -429,6 +454,7 @@ function ClarityView({
   userId,
   snapshot,
   checkinJustDone,
+  updatedAt,
 }: {
   result: FinancialResult;
   input: FinancialInput;
@@ -436,11 +462,11 @@ function ClarityView({
   countryCode: string;
   suggestionLines: string[];
   explainContext?: string;
-  /** Raw URL param values for building inline-edit navigation URLs. */
   editableParams: Record<string, string>;
   userId?: string;
   snapshot?: SnapshotRow | null;
   checkinJustDone?: boolean;
+  updatedAt?: string;
 }) {
   const { currency, locale } = currencyLocaleFromCountryCode(countryCode);
   const m = result.financialMetrics;
@@ -471,6 +497,48 @@ function ClarityView({
     ? Math.round((m.runway - snapshot.runway_months) * 10) / 10
     : null;
 
+  // --- Staleness, drift, and confidence decay ---
+  const staleness = updatedAt ? computeStaleness(updatedAt) : null;
+  const drift = staleness
+    ? estimateDrift(input, staleness.monthsElapsed)
+    : null;
+  const displayConfidence =
+    staleness && staleness.level !== "fresh"
+      ? applyStalenessPenalty(result.confidence, staleness)
+      : result.confidence;
+  const isStale = staleness && staleness.level !== "fresh";
+
+  // Target runway in months (for banner logic)
+  const targetRunwayMonths =
+    input.monthly_expenses > 0
+      ? m.required_cash / input.monthly_expenses
+      : 6;
+
+  // Banner content — contextual message based on staleness + situation
+  const bannerContent = userId
+    ? (checkinJustDone
+        ? { message: "", sub: undefined, buttonLabel: "", variant: "default" as const }
+        : computeBannerContent({
+            staleness: staleness ?? computeStaleness(new Date().toISOString()),
+            drift: drift ?? {
+              estimatedMonthlySaving: 0,
+              estimatedAddedSavings: 0,
+              projectedSavingsTotal: input.savings_total,
+              projectedCashAmount: input.cash_amount,
+              projectedRunwayMonths: m.runway,
+              meaningful: false,
+            },
+            status: result.status,
+            currentRunwayMonths: m.runway,
+            targetRunwayMonths,
+            currency,
+            locale,
+            lastCheckinLabel: snapshot?.taken_at
+              ? snapshotMonthLabel(snapshot.taken_at)
+              : undefined,
+          }))
+    : null;
+
   return (
     <div className="space-y-4">
       <header className="flex items-baseline justify-between gap-4">
@@ -481,8 +549,12 @@ function ClarityView({
       </header>
 
       {/* Check-in banner */}
-      {userId && (
-        <CheckinBanner userId={userId} snapshot={snapshot} checkinJustDone={checkinJustDone} />
+      {userId && bannerContent && (
+        <CheckinBanner
+          userId={userId}
+          checkinJustDone={checkinJustDone}
+          content={bannerContent}
+        />
       )}
 
       {/* 1. Highlight */}
@@ -508,11 +580,18 @@ function ClarityView({
         </p>
         <dl className="mt-4 grid gap-2 text-sm text-slate-600 sm:grid-cols-3">
           <div className="rounded-lg border border-slate-200/80 bg-white/60 px-3 py-2">
-            <dt className="text-xs text-slate-500">Runway</dt>
+            <dt className="text-xs text-slate-500">
+              Runway{isStale ? "*" : ""}
+            </dt>
             <dd className="font-semibold text-slate-900">{result.metrics.runway}</dd>
             {runwayDiff !== null && Math.abs(runwayDiff) >= 0.1 && (
               <dd className={`mt-0.5 text-xs font-medium ${runwayDiff > 0 ? "text-emerald-700" : "text-red-600"}`}>
                 {runwayDiff > 0 ? "↑" : "↓"} {runwayDiff > 0 ? "+" : ""}{runwayDiff} mo since {snapshotMonthLabel(snapshot!.taken_at)}
+              </dd>
+            )}
+            {isStale && drift?.meaningful && (
+              <dd className="mt-0.5 text-xs text-slate-400">
+                ~{Math.round(drift.projectedRunwayMonths * 10) / 10} mo estimated now
               </dd>
             )}
           </div>
@@ -525,19 +604,24 @@ function ClarityView({
             <dd className="font-semibold text-slate-900">{result.metrics.gap}</dd>
           </div>
         </dl>
+        {isStale && (
+          <p className="mt-2 text-xs text-slate-400">
+            *Based on figures from {staleness!.label}. Update for a fresh calculation.
+          </p>
+        )}
         <p className="mt-4 text-sm leading-relaxed text-slate-600">
           {result.reassurance}
         </p>
         <p
           className={`mt-4 text-sm font-medium leading-snug ${
-            result.confidence.level === "high"
+            displayConfidence.level === "high"
               ? "text-emerald-800"
-              : result.confidence.level === "medium"
+              : displayConfidence.level === "medium"
                 ? "text-amber-800"
                 : "text-slate-700"
           }`}
         >
-          {result.confidence.reason}
+          {displayConfidence.reason}
         </p>
         <div className="mt-5 rounded-xl border border-slate-200/90 bg-white/70 px-4 py-3">
           <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
@@ -860,6 +944,7 @@ export default async function Dashboard({
   const onboarding = resolved?.onboarding ?? null;
   const userId = resolved?.userId;
   const snapshot = resolved?.snapshot;
+  const updatedAt = resolved?.updatedAt;
   const checkinJustDone = sp.checkin === "1";
   const result = input ? getFinancialStatus(input) : null;
 
@@ -914,6 +999,7 @@ export default async function Dashboard({
           userId={userId}
           snapshot={snapshot}
           checkinJustDone={checkinJustDone}
+          updatedAt={updatedAt}
         />
       ) : (
         <EmptyState />

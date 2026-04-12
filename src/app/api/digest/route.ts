@@ -84,18 +84,25 @@ export async function POST(req: NextRequest) {
       const { currency, locale } = currencyLocaleFromCountryCode(onboarding.country);
 
       const m = result.financialMetrics;
-      const runwayStr = `${Math.round(m.runway * 10) / 10} months`;
+      const runwayMonths = Math.round(m.runway * 10) / 10;
+      const runwayStr = `${runwayMonths} months`;
       const targetMonths = financial.monthly_expenses > 0
         ? Math.round(m.required_cash / financial.monthly_expenses)
         : 6;
       const targetStr = `${targetMonths} months`;
       const gapStr = m.gap > 0 ? fmt(m.gap, currency, locale) + " to go" : "On target";
 
+      const daysSinceLastUpdate = profileRow.updated_at
+        ? Math.floor((Date.now() - new Date(profileRow.updated_at).getTime()) / (1000 * 60 * 60 * 24))
+        : 0;
+
       await sendDigestEmail({
         to: user.email,
         userId: user.id,
         statusBadge: STATUS_LABELS[result.status] ?? result.status,
+        statusKey: result.status,
         runway: runwayStr,
+        runwayMonths,
         target: targetStr,
         gap: gapStr,
         previous: snapshot
@@ -106,6 +113,7 @@ export async function POST(req: NextRequest) {
             }
           : null,
         countryLabel: onboarding.country,
+        daysSinceLastUpdate,
       });
 
       sent++;

@@ -121,7 +121,11 @@ export interface DigestEmailParams {
   to: string;
   userId: string;
   statusBadge: string;
+  /** Raw status key: ok / warning / risk / critical */
+  statusKey: string;
   runway: string;
+  /** Numeric runway months for comparison. */
+  runwayMonths: number;
   target: string;
   gap: string;
   /** Previous snapshot data for delta display — null if first digest. */
@@ -131,6 +135,8 @@ export interface DigestEmailParams {
     takenAt: string;
   } | null;
   countryLabel: string;
+  /** Days since the user last updated their profile numbers. */
+  daysSinceLastUpdate: number;
 }
 
 function runwayDelta(current: string, prev: { runwayMonths: number; takenAt: string }): string {
@@ -144,6 +150,46 @@ function runwayDelta(current: string, prev: { runwayMonths: number; takenAt: str
   return ` <span class="${cls}">(${sign}${diff.toFixed(1)} since ${label})</span>`;
 }
 
+function getDigestSubject(params: DigestEmailParams): string {
+  const { statusKey, daysSinceLastUpdate, runwayMonths, previous } = params;
+  const isImproving = previous != null && runwayMonths > previous.runwayMonths;
+  const monthsOld   = Math.round(daysSinceLastUpdate / 30);
+
+  // Very stale — lead with age regardless of status
+  if (daysSinceLastUpdate > 60) {
+    return `Your FundCalm read is ${monthsOld} months old \u2014 takes 60 seconds to refresh`;
+  }
+
+  // Good news: comfortable and runway grew
+  if (statusKey === "ok" && isImproving) {
+    return "Your buffer probably grew last month \u2014 here\u2019s the estimate";
+  }
+
+  // Comfortable but aging
+  if (statusKey === "ok" && daysSinceLastUpdate > 45) {
+    return `Your FundCalm read is ${monthsOld > 1 ? `${monthsOld} months` : "over a month"} old \u2014 takes 60 seconds to refresh`;
+  }
+
+  // Limited — soft nudge with timing
+  if (statusKey === "warning") {
+    const sinceMonth = previous?.takenAt
+      ? new Date(previous.takenAt).toLocaleDateString("en-US", { month: "long" })
+      : null;
+    return sinceMonth
+      ? `Your last check-in was in ${sinceMonth} \u2014 things may have shifted`
+      : "Things may have shifted since your last check-in";
+  }
+
+  // At risk or critical — direct and specific
+  if (statusKey === "risk" || statusKey === "critical") {
+    return "A quick check-in would sharpen your read \u2014 3 questions";
+  }
+
+  // Default
+  const month = new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  return `Your FundCalm check-in \u2014 ${month}`;
+}
+
 export async function sendDigestEmail(params: DigestEmailParams) {
   const resend = await getResend();
   const link = dashboardUrl(params.userId);
@@ -151,9 +197,14 @@ export async function sendDigestEmail(params: DigestEmailParams) {
 
   const deltaHtml = params.previous ? runwayDelta(params.runway, params.previous) : "";
 
+  // Body intro varies by staleness
+  const introLine = params.daysSinceLastUpdate > 45
+    ? `Your numbers are ${Math.round(params.daysSinceLastUpdate / 30)} months old — here's where things stand, and a reminder to do a quick update.`
+    : "Here's how your financial picture looks this month:";
+
   const body = `
     <h2>Your monthly check-in</h2>
-    <p>Here's how your financial picture looks this month:</p>
+    <p>${introLine}</p>
     <div class="metric">
       <span class="metric-label">Status</span>
       <span class="metric-value">${params.statusBadge}</span>
@@ -171,19 +222,17 @@ export async function sendDigestEmail(params: DigestEmailParams) {
       <span class="metric-value">${params.gap}</span>
     </div>
     <p style="margin-top:20px">
-      If anything has changed in your income, savings, or life situation this month,
-      it takes about 60 seconds to update your numbers and see a fresh read.
+      If anything has changed in your income, savings, or life situation,
+      it takes about 60 seconds to update your numbers and get a fresh read.
     </p>
     <a class="cta" href="${checkin}">Update my numbers</a>
     &nbsp;&nbsp;
     <a href="${link}" style="font-size:14px;color:#6b7280">View dashboard</a>`;
 
-  const month = new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" });
-
   await resend.emails.send({
     from: FROM,
     to: params.to,
-    subject: `Your FundCalm check-in — ${month}`,
+    subject: getDigestSubject(params),
     html: baseHtml(body),
   });
 }
