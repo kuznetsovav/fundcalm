@@ -40,6 +40,8 @@ export interface ProfileInput {
   mortgagePressure: MortgagePressure;
   primaryFear?: string;
   email?: string;
+  /** Override for monthly expenses — stored and used instead of derived value. */
+  expensesOverride?: number;
 }
 
 export interface ProfileRow {
@@ -58,6 +60,7 @@ export interface ProfileRow {
   debt_pressure: DebtPressure | null;
   mortgage_pressure: MortgagePressure | null;
   primary_fear: string | null;
+  expenses_override: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -65,6 +68,7 @@ export interface ProfileRow {
 export interface UserRow {
   id: string;
   email: string | null;
+  access_token: string | null;
   created_at: string;
 }
 
@@ -85,13 +89,21 @@ function debtToMortgageFallback(d: DebtPressure | null): MortgagePressure {
 // Write
 // ---------------------------------------------------------------------------
 
+function generateAccessToken(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID().replace(/-/g, "").slice(0, 24);
+  }
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
 export async function saveUserProfile(
   input: ProfileInput,
   userId?: string,
-): Promise<{ userId: string; profileId: string }> {
+): Promise<{ userId: string; profileId: string; accessToken?: string }> {
   const sb = await getSupabase();
 
   let uid = userId;
+  let accessToken: string | undefined;
 
   if (uid) {
     const { error } = await sb
@@ -99,15 +111,20 @@ export async function saveUserProfile(
       .upsert({ id: uid, email: input.email ?? null }, { onConflict: "id" });
     if (error) throw new Error(`User upsert failed: ${error.message}`);
   } else if (input.email) {
-    // Upsert on email so repeat sign-ups with the same address return the
-    // existing user row instead of hitting the unique constraint.
+    // Generate a fresh access token for every new email sign-up.
+    // Existing users who re-sign-up get a new token (old link becomes invalid).
+    accessToken = generateAccessToken();
     const { data, error } = await sb
       .from("users")
-      .upsert({ email: input.email }, { onConflict: "email" })
-      .select("id")
+      .upsert(
+        { email: input.email, access_token: accessToken },
+        { onConflict: "email" },
+      )
+      .select("id, access_token")
       .single();
     if (error) throw new Error(`User upsert failed: ${error.message}`);
     uid = data.id as string;
+    accessToken = (data.access_token as string | null) ?? accessToken;
   } else {
     // No email — just insert an anonymous user row.
     const { data, error } = await sb
@@ -145,6 +162,7 @@ export async function saveUserProfile(
         income_stability: input.incomeStability,
         mortgage_pressure: input.mortgagePressure,
         primary_fear: input.primaryFear ?? null,
+        expenses_override: input.expensesOverride ?? null,
       },
       { onConflict: "user_id" },
     )
@@ -155,7 +173,7 @@ export async function saveUserProfile(
     throw new Error(`Profile upsert failed: ${profileErr.message}`);
   }
 
-  return { userId: uid, profileId: profile.id as string };
+  return { userId: uid, profileId: profile.id as string, accessToken };
 }
 
 // ---------------------------------------------------------------------------
@@ -220,6 +238,7 @@ export function profileToOnboardingInput(row: ProfileRow): OnboardingInput {
     incomeStability,
     mortgagePressure,
     ...(primaryFear ? { primaryFear } : {}),
+    ...(row.expenses_override != null ? { expensesOverride: row.expenses_override } : {}),
   };
 }
 
@@ -237,4 +256,16 @@ export async function getUserEmail(userId: string): Promise<string | null> {
     .maybeSingle();
   if (error) return null;
   return (data as { email: string | null } | null)?.email ?? null;
+}
+
+/** Fetch full user row including access token. */
+export async function getUser(userId: string): Promise<UserRow | null> {
+  const sb = await getSupabase();
+  const { data, error } = await sb
+    .from("users")
+    .select("id, email, access_token, created_at")
+    .eq("id", userId)
+    .maybeSingle();
+  if (error) return null;
+  return data as UserRow | null;
 }

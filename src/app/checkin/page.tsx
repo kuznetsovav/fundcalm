@@ -9,6 +9,7 @@ import {
   incomeOpenThresholdLocal,
   incomeSliderPositionFromTier,
   incomeTierFromLocalMonthly,
+  incomeTierMid,
   savingsOpenThresholdLocal,
   savingsSliderPositionFromTier,
   savingsTierFromLocalTotal,
@@ -18,6 +19,7 @@ import {
   nearestSavingsRateKey,
   SAVINGS_RATE_SLIDER_RAMP_FRACTION,
   currencyLocaleFromCountryCode,
+  minMonthlyExpenseFloor,
 } from "@/lib/money-tiers";
 import {
   coerceIncomeRange,
@@ -38,11 +40,12 @@ interface ProfileState {
   incomeStability: IncomeStability;
   mortgagePressure: MortgagePressure;
   primaryFear?: string;
+  expensesOverride?: number | null;
 }
 
-type CheckinStep = "income" | "savings" | "savingsRate" | "confirm";
+type CheckinStep = "income" | "savings" | "savingsRate" | "expenses" | "confirm";
 
-const STEP_ORDER: CheckinStep[] = ["income", "savings", "savingsRate", "confirm"];
+const STEP_ORDER: CheckinStep[] = ["income", "savings", "savingsRate", "expenses", "confirm"];
 
 export default function CheckinPage() {
   return (
@@ -56,6 +59,7 @@ function CheckinContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const userId = searchParams.get("user") ?? "";
+  const token = searchParams.get("token") ?? undefined;
 
   const [profile, setProfile] = useState<ProfileState | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -67,11 +71,13 @@ function CheckinContent() {
   const [incomeSliderPos, setIncomeSliderPos] = useState(RAMP / 2);
   const [savingsSliderPos, setSavingsSliderPos] = useState(RAMP / 2);
   const [savingsRateSliderPos, setSavingsRateSliderPos] = useState(RAMP / 2);
+  const [expensesSliderPos, setExpensesSliderPos] = useState(RAMP / 2);
 
   // Derived display values
   const [editedIncome, setEditedIncome] = useState<IncomeRange | null>(null);
   const [editedSavings, setEditedSavings] = useState<SavingsRange | null>(null);
   const [editedSavingsRate, setEditedSavingsRate] = useState<SavingsRateRange | null>(null);
+  const [editedExpenses, setEditedExpenses] = useState<number | null>(null);
 
   const profileRef = useRef<ProfileState | null>(null);
   profileRef.current = profile;
@@ -100,6 +106,16 @@ function CheckinContent() {
         const ratePos = savingsRateSliderPositionFromKey(p.savingsRate, RAMP);
         setSavingsRateSliderPos(ratePos);
         setEditedSavingsRate(p.savingsRate);
+
+        // Expenses: use stored override or derive from income × (1 - savingsRate)
+        if (p.expensesOverride != null) {
+          const derived = p.expensesOverride;
+          setEditedExpenses(derived);
+          // Rough slider position: linear in 0–RAMP, capped at a local max
+          const maxExpenses = incomeTierMid(cur, p.income) * 1.2;
+          const pos = Math.round(Math.min(1, derived / maxExpenses) * RAMP);
+          setExpensesSliderPos(pos);
+        }
       } catch {
         setLoadError("We couldn't load your profile. Check the link and try again.");
       }
@@ -146,7 +162,7 @@ function CheckinContent() {
     setSaving(true);
     setSaveError(null);
 
-    const payload = {
+    const payload: Record<string, unknown> = {
       userId,
       income: editedIncome ?? profile.income,
       savings: editedSavings ?? profile.savings,
@@ -157,6 +173,7 @@ function CheckinContent() {
       mortgagePressure: profile.mortgagePressure,
       primaryFear: profile.primaryFear,
     };
+    if (editedExpenses != null) payload.expensesOverride = editedExpenses;
 
     try {
       const res = await fetch("/api/checkin", {
@@ -165,7 +182,10 @@ function CheckinContent() {
         body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error("Check-in failed");
-      router.push(`/dashboard?user=${userId}&checkin=1`);
+      const redirect = token
+        ? `/dashboard?user=${userId}&checkin=1&token=${token}`
+        : `/dashboard?user=${userId}&checkin=1`;
+      router.push(redirect);
     } catch {
       setSaveError("Something went wrong. Please try again.");
       setSaving(false);
@@ -227,6 +247,32 @@ function CheckinContent() {
     const pct = Math.round((openEnded ? SAVINGS_RATE_SLIDER_RAMP_FRACTION : rate) * 100);
     return openEnded ? `More than ${Math.round(SAVINGS_RATE_SLIDER_RAMP_FRACTION * 100)}%` : `${pct}%`;
   })();
+
+  // Expenses: slider range 0–RAMP maps to floor–2×income
+  const incomeAmount = (() => {
+    const { monthlyLocal } = incomeFromSliderPosition(currency, incomeSliderPos, RAMP);
+    return monthlyLocal;
+  })();
+  const expensesMax = Math.max(minMonthlyExpenseFloor(currency) * 4, incomeAmount * 1.5);
+  const expensesValue = Math.max(
+    minMonthlyExpenseFloor(currency),
+    Math.round((expensesSliderPos / RAMP) * expensesMax),
+  );
+  const expensesDisplay = `${moneyFmt.format(expensesValue)} / mo`;
+
+  function applyExpensesSlider(pos: number) {
+    setExpensesSliderPos(pos);
+    const val = Math.max(minMonthlyExpenseFloor(currency), Math.round((pos / RAMP) * expensesMax));
+    setEditedExpenses(val);
+  }
+
+  // Confirm rows include expenses if the user explicitly set it
+  const confirmRows = [
+    { label: "Monthly income", value: incomeDisplay },
+    { label: "Total savings", value: savingsDisplay },
+    { label: "Savings rate", value: savingsRateDisplay },
+    ...(editedExpenses != null ? [{ label: "Monthly expenses", value: expensesDisplay }] : []),
+  ];
 
   const progressPct = ((stepIndex + 1) / STEP_ORDER.length) * 100;
 
@@ -344,6 +390,43 @@ function CheckinContent() {
           </>
         )}
 
+        {step === "expenses" && (
+          <>
+            <h1 className="fc-title-lg text-center">What are your monthly expenses?</h1>
+            <p className="mt-2 text-center text-[15px] leading-relaxed text-slate-500">
+              Total spending per month — rent, food, subscriptions, everything. This sharpens your runway calculation.
+            </p>
+            <div className="mt-8 space-y-6">
+              <div className="fc-onboarding-well px-2">
+                <p className="text-center text-4xl font-semibold tabular-nums tracking-tight text-slate-900 sm:text-5xl">
+                  {expensesDisplay}
+                </p>
+              </div>
+              <div className="fc-onboarding-range-wrap">
+                <input
+                  type="range"
+                  min={0}
+                  max={RAMP}
+                  step={1}
+                  value={expensesSliderPos}
+                  onInput={(e) => applyExpensesSlider(Number((e.target as HTMLInputElement).value))}
+                  onChange={(e) => applyExpensesSlider(Number(e.target.value))}
+                  className="fc-onboarding-range w-full"
+                  style={{ touchAction: "none" }}
+                  aria-label="Monthly expenses"
+                />
+              </div>
+              <div className="flex justify-between text-xs tabular-nums text-slate-500">
+                <span>{moneyFmt.format(minMonthlyExpenseFloor(currency))}</span>
+                <span>{moneyFmt.format(Math.round(expensesMax))}</span>
+              </div>
+            </div>
+            <p className="mt-4 text-center text-xs text-slate-400">
+              Optional — skip if you're not sure. We'll estimate from your income and savings rate.
+            </p>
+          </>
+        )}
+
         {step === "confirm" && (
           <>
             <h1 className="fc-title-lg text-center">Looks good?</h1>
@@ -351,11 +434,7 @@ function CheckinContent() {
               We'll save these as your updated numbers and recalculate your dashboard.
             </p>
             <div className="mt-6 space-y-2">
-              {[
-                { label: "Monthly income", value: incomeDisplay },
-                { label: "Total savings", value: savingsDisplay },
-                { label: "Savings rate", value: savingsRateDisplay },
-              ].map((row) => (
+              {confirmRows.map((row) => (
                 <div
                   key={row.label}
                   className="flex items-center justify-between rounded-xl border border-gray-100 bg-gray-50/80 px-4 py-3"
@@ -373,7 +452,10 @@ function CheckinContent() {
 
         <div className="mt-10 flex gap-3">
           {step === "income" ? (
-            <Link href={`/dashboard?user=${userId}`} className="fc-btn-secondary">
+            <Link
+              href={token ? `/dashboard?user=${userId}&token=${token}` : `/dashboard?user=${userId}`}
+              className="fc-btn-secondary"
+            >
               Cancel
             </Link>
           ) : (
@@ -394,6 +476,25 @@ function CheckinContent() {
             >
               {saving ? "Saving…" : "Update my numbers"}
             </button>
+          ) : step === "expenses" ? (
+            <div className="flex min-w-0 flex-1 flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => setStep(STEP_ORDER[stepIndex + 1])}
+                className="fc-btn-primary-block w-full rounded-xl"
+              >
+                {editedExpenses != null ? "Continue" : "Skip"}
+              </button>
+              {editedExpenses != null && (
+                <button
+                  type="button"
+                  onClick={() => { setEditedExpenses(null); setStep(STEP_ORDER[stepIndex + 1]); }}
+                  className="text-center text-xs text-slate-400 underline underline-offset-2 hover:text-slate-600"
+                >
+                  Skip — use estimated expenses
+                </button>
+              )}
+            </div>
           ) : (
             <button
               type="button"

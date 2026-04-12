@@ -101,3 +101,21 @@ create policy "Profiles: update own"
   );
 
 -- For server-side access with the service_role key, RLS is bypassed automatically.
+
+-- ============================================================
+-- Migration: access_token on users + expenses_override on profiles
+-- Run these in the Supabase SQL Editor if the tables already exist.
+-- ============================================================
+
+-- Secure dashboard links: opaque token stored alongside the user row.
+-- NULL means the user signed up anonymously (no email) — no gate applied.
+alter table if exists users
+  add column if not exists access_token text;
+
+-- Actual monthly expenses entered during check-in.
+-- NULL means we derive from income × (1 − savings_rate) as before.
+alter table if exists financial_profiles
+  add column if not exists expenses_override numeric;
+
+-- Notify PostgREST to reload the schema cache after adding columns.
+notify pgrst, 'reload schema';

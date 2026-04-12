@@ -82,6 +82,24 @@ export async function getLatestSnapshot(
   return data as SnapshotRow | null;
 }
 
+/**
+ * Fetch up to 12 snapshots for a user (about one year), oldest first.
+ * Returns an empty array on error so the dashboard degrades gracefully.
+ */
+export async function getAllSnapshots(userId: string): Promise<SnapshotRow[]> {
+  const sb = await getSupabase();
+
+  const { data, error } = await sb
+    .from("profile_snapshots")
+    .select("id, user_id, taken_at, status, runway_months, gap_amount")
+    .eq("user_id", userId)
+    .order("taken_at", { ascending: true })
+    .limit(12);
+
+  if (error) return [];
+  return (data ?? []) as SnapshotRow[];
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

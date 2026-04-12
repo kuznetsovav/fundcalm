@@ -14,8 +14,9 @@ import {
   type Status,
   type FinancialMetrics,
 } from "@/lib/engine";
-import { getUserProfile, profileToOnboardingInput } from "@/lib/profiles";
-import { getLatestSnapshot, snapshotMonthLabel, type SnapshotRow } from "@/lib/snapshots";
+import { getUserProfile, profileToOnboardingInput, getUser, type UserRow } from "@/lib/profiles";
+import { getLatestSnapshot, getAllSnapshots, snapshotMonthLabel, type SnapshotRow } from "@/lib/snapshots";
+import WhatIfPanel from "./what-if-panel";
 import {
   computeStaleness,
   applyStalenessPenalty,
@@ -28,12 +29,7 @@ import {
   onboardingAnswersForDisplay,
   suggestionsForDisplay,
 } from "@/lib/onboarding-display";
-import {
-  dashboardComfortNarrative,
-  dashboardCurrentVsTargetRows,
-  dashboardNeedsAttention,
-  dashboardSituationNarrative,
-} from "@/lib/dashboard-attention";
+import { dashboardSituationNarrative } from "@/lib/dashboard-attention";
 import CollapsibleSection from "./collapsible-section";
 import { currencyLocaleFromCountryCode } from "@/lib/money-tiers";
 import {
@@ -260,14 +256,18 @@ async function resolveDashboardData(
   financial: FinancialInput;
   userId?: string;
   snapshot?: SnapshotRow | null;
+  allSnapshots?: SnapshotRow[];
   updatedAt?: string;
+  userRow?: UserRow | null;
 } | null> {
   const userId = typeof sp.user === "string" ? sp.user : undefined;
   if (userId) {
     try {
-      const [row, snapshot] = await Promise.all([
+      const [row, snapshot, allSnapshots, userRow] = await Promise.all([
         withTimeout(getUserProfile(userId), 5_000, null),
         withTimeout(getLatestSnapshot(userId), 3_000, null),
+        withTimeout(getAllSnapshots(userId), 3_000, []),
+        withTimeout(getUser(userId), 3_000, null),
       ]);
       if (row) {
         const onboarding = profileToOnboardingInput(row);
@@ -276,7 +276,9 @@ async function resolveDashboardData(
           financial: fromOnboarding(onboarding),
           userId,
           snapshot,
+          allSnapshots,
           updatedAt: row.updated_at,
+          userRow,
         };
       }
     } catch {
@@ -386,6 +388,130 @@ function EmptyState() {
   );
 }
 
+function TokenGate({ userId }: { userId: string }) {
+  return (
+    <div className="fc-surface mt-10 px-6 py-12 text-center">
+      <p className="text-lg font-semibold text-slate-900">Use your email link</p>
+      <p className="mt-2 text-sm text-slate-500">
+        Your dashboard is protected. Use the link we sent to your email address to access it.
+      </p>
+      <p className="mt-3 text-xs text-slate-400">
+        Can't find it? Re-enter your email on the onboarding page and we'll send a new link.
+      </p>
+      <Link href="/onboarding" className="fc-btn-primary mt-8">
+        Get a new link
+      </Link>
+    </div>
+  );
+}
+
+function RunwayHistoryChart({
+  snapshots,
+  currentRunway,
+  targetRunway,
+}: {
+  snapshots: SnapshotRow[];
+  currentRunway: number;
+  targetRunway: number;
+}) {
+  // Need at least 2 points to draw a line
+  const points = snapshots.filter((s) => s.runway_months != null);
+  if (points.length < 2) return null;
+
+  const W = 560;
+  const H = 110;
+  const PAD = { top: 14, right: 16, bottom: 24, left: 36 };
+  const cW = W - PAD.left - PAD.right;
+  const cH = H - PAD.top - PAD.bottom;
+
+  const allRunways = [...points.map((p) => p.runway_months as number), currentRunway, targetRunway];
+  const maxY = Math.ceil(Math.max(...allRunways) * 1.25);
+
+  function xFor(i: number) {
+    return PAD.left + (i / (points.length)) * cW;
+  }
+  function yFor(v: number) {
+    return PAD.top + (1 - v / maxY) * cH;
+  }
+
+  // Current point (right edge)
+  const currentX = PAD.left + cW;
+  const currentY = yFor(currentRunway);
+  const targetY = yFor(targetRunway);
+
+  const linePath = [
+    ...points.map((p, i) => `${i === 0 ? "M" : "L"} ${xFor(i)} ${yFor(p.runway_months as number)}`),
+    `L ${currentX} ${currentY}`,
+  ].join(" ");
+
+  // Y-axis labels (0, half, max)
+  const yLabels = [0, Math.round(maxY / 2), maxY];
+
+  return (
+    <div className="mt-5 overflow-x-auto">
+      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
+        Runway history
+      </p>
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        className="w-full"
+        style={{ minWidth: 260 }}
+        aria-label="Runway history chart"
+      >
+        {/* Target runway dashed line */}
+        <line
+          x1={PAD.left}
+          y1={targetY}
+          x2={W - PAD.right}
+          y2={targetY}
+          stroke="#059669"
+          strokeWidth={1}
+          strokeDasharray="4 3"
+          opacity={0.5}
+        />
+        <text x={W - PAD.right + 2} y={targetY + 4} fontSize={9} fill="#059669" opacity={0.7}>
+          target
+        </text>
+
+        {/* Y-axis labels */}
+        {yLabels.map((v) => (
+          <text key={v} x={PAD.left - 4} y={yFor(v) + 4} fontSize={9} fill="#9ca3af" textAnchor="end">
+            {v}
+          </text>
+        ))}
+
+        {/* Line */}
+        <path d={linePath} fill="none" stroke="#059669" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+
+        {/* Snapshot dots with tooltips */}
+        {points.map((p, i) => (
+          <circle key={p.id} cx={xFor(i)} cy={yFor(p.runway_months as number)} r={3} fill="#059669" opacity={0.7}>
+            <title>{snapshotMonthLabel(p.taken_at)}: {Math.round((p.runway_months as number) * 10) / 10} mo</title>
+          </circle>
+        ))}
+
+        {/* Current dot (highlighted) */}
+        <circle cx={currentX} cy={currentY} r={4.5} fill="#059669">
+          <title>Now: {Math.round(currentRunway * 10) / 10} mo</title>
+        </circle>
+        <circle cx={currentX} cy={currentY} r={7} fill="none" stroke="#059669" strokeWidth={1.5} opacity={0.3} />
+
+        {/* X-axis date labels (first, middle, last snapshot) */}
+        {[0, Math.floor(points.length / 2)].map((i) =>
+          points[i] ? (
+            <text key={i} x={xFor(i)} y={H - 4} fontSize={9} fill="#9ca3af" textAnchor="middle">
+              {snapshotMonthLabel(points[i].taken_at)}
+            </text>
+          ) : null
+        )}
+        <text x={currentX} y={H - 4} fontSize={9} fill="#374151" textAnchor="end">
+          now
+        </text>
+      </svg>
+    </div>
+  );
+}
+
 const BANNER_STYLES = {
   default: {
     wrap: "border border-gray-100 bg-gray-50/80",
@@ -411,10 +537,12 @@ function CheckinBanner({
   userId,
   checkinJustDone,
   content,
+  token,
 }: {
   userId: string;
   checkinJustDone?: boolean;
   content: import("@/lib/staleness").BannerContent;
+  token?: string;
 }) {
   if (checkinJustDone) {
     return (
@@ -423,6 +551,10 @@ function CheckinBanner({
       </div>
     );
   }
+
+  const checkinHref = token
+    ? `/checkin?user=${userId}&token=${token}`
+    : `/checkin?user=${userId}`;
 
   const s = BANNER_STYLES[content.variant];
   return (
@@ -434,11 +566,96 @@ function CheckinBanner({
         )}
       </div>
       <Link
-        href={`/checkin?user=${userId}`}
+        href={checkinHref}
         className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold ${s.btn}`}
       >
         {content.buttonLabel}
       </Link>
+    </div>
+  );
+}
+
+function RunwayBar({
+  runwayMonths,
+  targetMonths,
+  projectedMonths,
+  isStale,
+  runwayDiff,
+  snapshotLabel,
+}: {
+  runwayMonths: number;
+  targetMonths: number;
+  projectedMonths?: number;
+  isStale: boolean;
+  runwayDiff: number | null;
+  snapshotLabel?: string;
+}) {
+  // Bar fills proportionally; cap display at 150% of target so the bar doesn't overflow on healthy users
+  const displayMax = Math.max(targetMonths * 1.5, runwayMonths);
+  const fillPct = Math.min(100, (runwayMonths / displayMax) * 100);
+  const targetPct = Math.min(100, (targetMonths / displayMax) * 100);
+  const projectedPct = projectedMonths != null
+    ? Math.min(100, (projectedMonths / displayMax) * 100)
+    : null;
+
+  const isShort = runwayMonths < targetMonths;
+  const barColor = isShort ? "bg-amber-400" : "bg-emerald-500";
+
+  return (
+    <div className="mt-5">
+      {/* Bar */}
+      <div className="relative h-3 w-full overflow-visible rounded-full bg-slate-100">
+        {/* Fill */}
+        <div
+          className={`h-3 rounded-full transition-all ${barColor}`}
+          style={{ width: `${fillPct}%` }}
+        />
+        {/* Projected fill (ghost) */}
+        {projectedPct != null && projectedPct > fillPct && (
+          <div
+            className="absolute top-0 h-3 rounded-full bg-emerald-200"
+            style={{ left: `${fillPct}%`, width: `${projectedPct - fillPct}%` }}
+          />
+        )}
+        {/* Target marker */}
+        <div
+          className="absolute top-[-4px] h-5 w-0.5 rounded-full bg-slate-400"
+          style={{ left: `${targetPct}%` }}
+        />
+      </div>
+
+      {/* Labels row */}
+      <div className="relative mt-2 h-5">
+        {/* Current runway label */}
+        <span
+          className="absolute -translate-x-1/2 whitespace-nowrap text-[11px] font-semibold tabular-nums text-slate-700"
+          style={{ left: `${Math.max(5, Math.min(95, fillPct))}%` }}
+        >
+          {Math.round(runwayMonths * 10) / 10} mo
+          {isStale && <span className="ml-0.5 text-slate-400">*</span>}
+        </span>
+        {/* Target label */}
+        <span
+          className="absolute -translate-x-1/2 whitespace-nowrap text-[11px] text-slate-400"
+          style={{ left: `${Math.max(5, Math.min(92, targetPct))}%` }}
+        >
+          target: {Math.round(targetMonths * 10) / 10} mo
+        </span>
+      </div>
+
+      {/* Delta and projected lines */}
+      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1">
+        {runwayDiff !== null && Math.abs(runwayDiff) >= 0.1 && snapshotLabel && (
+          <p className={`text-xs font-medium tabular-nums ${runwayDiff > 0 ? "text-emerald-700" : "text-red-600"}`}>
+            {runwayDiff > 0 ? "↑" : "↓"} {runwayDiff > 0 ? "+" : ""}{runwayDiff} mo since {snapshotLabel}
+          </p>
+        )}
+        {projectedMonths != null && isStale && (
+          <p className="text-xs text-slate-400">
+            ~{Math.round(projectedMonths * 10) / 10} mo estimated now
+          </p>
+        )}
+      </div>
     </div>
   );
 }
@@ -453,8 +670,10 @@ function ClarityView({
   editableParams,
   userId,
   snapshot,
+  allSnapshots,
   checkinJustDone,
   updatedAt,
+  token,
 }: {
   result: FinancialResult;
   input: FinancialInput;
@@ -465,8 +684,10 @@ function ClarityView({
   editableParams: Record<string, string>;
   userId?: string;
   snapshot?: SnapshotRow | null;
+  allSnapshots?: SnapshotRow[];
   checkinJustDone?: boolean;
   updatedAt?: string;
+  token?: string;
 }) {
   const { currency, locale } = currencyLocaleFromCountryCode(countryCode);
   const m = result.financialMetrics;
@@ -478,18 +699,9 @@ function ClarityView({
   const projLines = projectionBullets(input, savePerMonth, m);
   const fmt = (n: number) => fmtCurrency(n, currency, locale);
 
-  const needsAttention = dashboardNeedsAttention(result);
-  const urgentLead = needsAttention
-    ? (suggestionLines[0] ?? result.action)
-    : null;
-  const furtherActions = (
-    needsAttention ? suggestionLines.slice(1) : suggestionLines
-  ).slice(0, 6);
-
-  const situationNarrative = needsAttention
-    ? dashboardSituationNarrative(input, m, fmt)
-    : dashboardComfortNarrative(input, m, fmt);
-  const compareRows = dashboardCurrentVsTargetRows(input, m, fmt);
+  // Skip the first two items (result.action + result.insight) which are already
+  // rendered directly above. Show up to 3 of the remaining strategic bullets.
+  const actionBullets = suggestionLines.slice(2, 5);
   const profileRows = onboardingAnswersForDisplay(onboarding);
   const estimateRows = financialEstimatesForDisplay(input, m);
 
@@ -497,24 +709,18 @@ function ClarityView({
     ? Math.round((m.runway - snapshot.runway_months) * 10) / 10
     : null;
 
-  // --- Staleness, drift, and confidence decay ---
+  // Staleness, drift, confidence
   const staleness = updatedAt ? computeStaleness(updatedAt) : null;
-  const drift = staleness
-    ? estimateDrift(input, staleness.monthsElapsed)
-    : null;
+  const drift = staleness ? estimateDrift(input, staleness.monthsElapsed) : null;
   const displayConfidence =
     staleness && staleness.level !== "fresh"
       ? applyStalenessPenalty(result.confidence, staleness)
       : result.confidence;
-  const isStale = staleness && staleness.level !== "fresh";
+  const isStale = !!(staleness && staleness.level !== "fresh");
 
-  // Target runway in months (for banner logic)
   const targetRunwayMonths =
-    input.monthly_expenses > 0
-      ? m.required_cash / input.monthly_expenses
-      : 6;
+    input.monthly_expenses > 0 ? m.required_cash / input.monthly_expenses : 6;
 
-  // Banner content — contextual message based on staleness + situation
   const bannerContent = userId
     ? (checkinJustDone
         ? { message: "", sub: undefined, buttonLabel: "", variant: "default" as const }
@@ -539,6 +745,13 @@ function ClarityView({
           }))
     : null;
 
+  const confidenceColor =
+    displayConfidence.level === "high"
+      ? "text-emerald-700"
+      : displayConfidence.level === "medium"
+        ? "text-amber-700"
+        : "text-slate-500";
+
   return (
     <div className="space-y-4">
       <header className="flex items-baseline justify-between gap-4">
@@ -548,180 +761,84 @@ function ClarityView({
         </Link>
       </header>
 
-      {/* Check-in banner */}
+      {/* Update banner */}
       {userId && bannerContent && (
         <CheckinBanner
           userId={userId}
           checkinJustDone={checkinJustDone}
           content={bannerContent}
+          token={token}
         />
       )}
 
-      {/* 1. Highlight */}
-      <section
-        className={`rounded-2xl px-5 py-6 shadow-fc-sm ${hero.border} ${hero.bg}`}
-      >
+      {/* ── SECTION 1: Status card ── */}
+      <section className={`rounded-2xl px-5 py-6 shadow-fc-sm ${hero.border} ${hero.bg}`}>
+
+        {/* Badge + diagnosis label */}
         <div className="flex flex-wrap items-center gap-2">
-          <span
-            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold text-white ${hero.badgeClass}`}
-          >
+          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold text-white ${hero.badgeClass}`}>
             <span className="h-1.5 w-1.5 rounded-full bg-white/90" />
             {hero.badge}
           </span>
+          <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+            {DIAGNOSIS_LABEL[result.diagnosis]}
+          </span>
         </div>
-        <p className="mt-1 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
-          {DIAGNOSIS_LABEL[result.diagnosis]}
-        </p>
-        <p className="mt-2 text-sm font-semibold leading-snug text-slate-800">
-          {result.verdict}
-        </p>
-        <p className="mt-3 text-xl font-semibold leading-snug tracking-tight text-slate-900 sm:text-2xl">
+
+        {/* One-sentence summary */}
+        <p className="mt-3 text-lg font-semibold leading-snug tracking-tight text-slate-900 sm:text-xl">
           {result.summary}
         </p>
-        <dl className="mt-4 grid gap-2 text-sm text-slate-600 sm:grid-cols-3">
-          <div className="rounded-lg border border-slate-200/80 bg-white/60 px-3 py-2">
-            <dt className="text-xs text-slate-500">
-              Runway{isStale ? "*" : ""}
-            </dt>
-            <dd className="font-semibold text-slate-900">{result.metrics.runway}</dd>
-            {runwayDiff !== null && Math.abs(runwayDiff) >= 0.1 && (
-              <dd className={`mt-0.5 text-xs font-medium ${runwayDiff > 0 ? "text-emerald-700" : "text-red-600"}`}>
-                {runwayDiff > 0 ? "↑" : "↓"} {runwayDiff > 0 ? "+" : ""}{runwayDiff} mo since {snapshotMonthLabel(snapshot!.taken_at)}
-              </dd>
-            )}
-            {isStale && drift?.meaningful && (
-              <dd className="mt-0.5 text-xs text-slate-400">
-                ~{Math.round(drift.projectedRunwayMonths * 10) / 10} mo estimated now
-              </dd>
-            )}
-          </div>
-          <div className="rounded-lg border border-slate-200/80 bg-white/60 px-3 py-2">
-            <dt className="text-xs text-slate-500">Target</dt>
-            <dd className="font-semibold text-slate-900">{result.metrics.target}</dd>
-          </div>
-          <div className="rounded-lg border border-slate-200/80 bg-white/60 px-3 py-2 sm:col-span-1">
-            <dt className="text-xs text-slate-500">Gap</dt>
-            <dd className="font-semibold text-slate-900">{result.metrics.gap}</dd>
-          </div>
-        </dl>
+
+        {/* Runway bar */}
+        <RunwayBar
+          runwayMonths={m.runway}
+          targetMonths={targetRunwayMonths}
+          projectedMonths={drift?.meaningful ? drift.projectedRunwayMonths : undefined}
+          isStale={isStale}
+          runwayDiff={runwayDiff}
+          snapshotLabel={snapshot?.taken_at ? snapshotMonthLabel(snapshot.taken_at) : undefined}
+        />
         {isStale && (
-          <p className="mt-2 text-xs text-slate-400">
-            *Based on figures from {staleness!.label}. Update for a fresh calculation.
+          <p className="mt-1 text-xs text-slate-400">
+            * Based on figures from {staleness!.label}. Update for a fresh read.
           </p>
         )}
-        <p className="mt-4 text-sm leading-relaxed text-slate-600">
-          {result.reassurance}
-        </p>
-        <p
-          className={`mt-4 text-sm font-medium leading-snug ${
-            displayConfidence.level === "high"
-              ? "text-emerald-800"
-              : displayConfidence.level === "medium"
-                ? "text-amber-800"
-                : "text-slate-700"
-          }`}
-        >
+
+        {/* Gap stat — only when meaningful */}
+        {m.gap > 0 && (
+          <p className="mt-4 text-sm text-slate-600">
+            <span className="font-semibold tabular-nums text-slate-900">{fmt(m.gap)}</span>
+            {" "}short of your target buffer.
+          </p>
+        )}
+        {m.gap <= 0 && (
+          <p className="mt-4 text-sm text-slate-600">
+            You're at or above your target buffer.
+          </p>
+        )}
+
+        {/* Confidence — inline, unobtrusive */}
+        <p className={`mt-3 text-xs ${confidenceColor}`}>
           {displayConfidence.reason}
         </p>
-        <div className="mt-5 rounded-xl border border-slate-200/90 bg-white/70 px-4 py-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
-            What could change this read
-          </p>
-          <ul className="mt-2 space-y-2 text-sm leading-relaxed text-slate-700">
-            {result.sensitivity.what_changes.map((line) => (
-              <li key={line} className="flex gap-2">
-                <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-slate-400" />
-                {line}
-              </li>
-            ))}
-          </ul>
-        </div>
       </section>
 
-      {/* 2. How to fix the biggest issue / your position */}
+      {/* ── SECTION 2: What this means + what to do ── */}
       <section className="fc-surface px-5 py-5">
-        <h2 className="text-base font-semibold text-slate-900">
-          {needsAttention
-            ? "How to fix the biggest issue"
-            : "Your position"}
-        </h2>
-        <p className="mt-1 text-xs leading-relaxed text-slate-500">
-          {needsAttention
-            ? "Estimated figures from your onboarding—use them as a starting point, not a diagnosis."
-            : "Liquidity snapshot from your answers (illustrative model)."}
-        </p>
-        <p className="mt-4 text-[15px] font-medium leading-relaxed text-slate-800">
+
+        {/* Core insight */}
+        <p className="text-[15px] font-medium leading-relaxed text-slate-800">
           {result.insight}
         </p>
-        <p className="mt-3 text-[15px] leading-relaxed text-slate-700">
-          {situationNarrative}
-        </p>
-        {needsAttention ? (
-          <div className="mt-6 overflow-x-auto rounded-xl border border-gray-100">
-            <table className="w-full min-w-[280px] text-left text-sm">
-              <thead>
-                <tr className="border-b border-gray-100 bg-gray-50/80">
-                  <th className="px-3 py-2.5 font-medium text-slate-500">
-                    Metric
-                  </th>
-                  <th className="px-3 py-2.5 font-medium text-slate-500">
-                    Current (estimated)
-                  </th>
-                  <th className="px-3 py-2.5 font-medium text-slate-500">
-                    Target reference
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {compareRows.map((row) => (
-                  <tr
-                    key={row.label}
-                    className="border-b border-gray-50 last:border-0"
-                  >
-                    <td className="px-3 py-3 text-slate-600">{row.label}</td>
-                    <td className="px-3 py-3 font-semibold tabular-nums text-slate-900">
-                      {row.current}
-                    </td>
-                    <td className="px-3 py-3 font-medium tabular-nums text-emerald-800">
-                      {row.target}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-      </section>
 
-      {/* 3. Recommended actions going forward */}
-      <section
-        id="recommended-forward"
-        className="fc-surface px-5 py-5 scroll-mt-4"
-      >
-        <h2 className="text-base font-semibold text-slate-900">
-          Recommended actions going forward
-        </h2>
-        <p className="mt-1 text-xs leading-relaxed text-slate-500">
-          Near-term steps from your numbers, plus how cash versus longer-term
-          investing might fit over the next few years—illustrative, not a plan.
+        {/* Primary action */}
+        <p className="mt-3 text-sm leading-relaxed text-slate-600">
+          {result.action}
         </p>
 
-        {needsAttention && urgentLead ? (
-          <div className="fc-recommended-card mt-4">
-            <p className="text-sm font-semibold text-slate-900">
-              Priority focus
-            </p>
-            <p className="mt-2 text-sm leading-relaxed text-slate-600">
-              {urgentLead}
-            </p>
-          </div>
-        ) : (
-          <p className="mt-3 text-sm leading-relaxed text-slate-600">
-            {result.action}
-          </p>
-        )}
-
-        <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-4">
+        {/* Fear-personalised block */}
+        <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-4">
           <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
             {FEAR_LABEL[input.primary_fear] ?? "Given your main worry"}
           </p>
@@ -729,11 +846,7 @@ function ClarityView({
             {result.projection}
           </p>
           <ul className="mt-3 space-y-2 border-t border-slate-200/60 pt-3">
-            {fearExtraBullets(
-              input.primary_fear,
-              m.gap <= 0,
-              input.hasInvestments,
-            ).map((line) => (
+            {fearExtraBullets(input.primary_fear, m.gap <= 0, input.hasInvestments).map((line) => (
               <li key={line} className="flex gap-2 text-sm leading-relaxed text-slate-600">
                 <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-slate-400" />
                 {line}
@@ -742,172 +855,150 @@ function ClarityView({
           </ul>
         </div>
 
-        <h3 className="mt-8 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-          Illustrative path (savings trajectory)
-        </h3>
-        <p className="mt-2 text-xs leading-relaxed text-slate-500">
-          If your estimated monthly savings continue. "With returns" applies a
-          conservative ~4% annual return to your invested portion only. "Real value"
-          deflates by ~{Math.round(inflationRate * 100)}% illustrative annual inflation
-          to show purchasing power — all figures are illustrative, not a forecast.
-          Year-end totals include all savings pots, not liquid cash alone.
-        </p>
-        <div className="mt-4 overflow-x-auto rounded-xl border border-gray-100">
-          <table className="w-full min-w-[320px] text-left text-sm">
-            <thead>
-              <tr className="border-b border-gray-100 bg-gray-50/80">
-                <th className="px-3 py-2.5 font-medium text-slate-500">Year</th>
-                <th className="px-3 py-2.5 font-medium text-slate-500">
-                  Nominal
-                </th>
-                {input.hasInvestments && (
-                  <th className="px-3 py-2.5 font-medium text-slate-500">
-                    With ~4% returns
-                  </th>
-                )}
-                <th className="px-3 py-2.5 font-medium text-slate-500">
-                  Real value
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {yearProjections.map((row) => (
-                <tr
-                  key={row.label}
-                  className="border-b border-gray-50 last:border-0"
-                >
-                  <td className="px-3 py-3 text-slate-500">{row.label}</td>
-                  <td className="px-3 py-3 font-semibold tabular-nums text-slate-900">
-                    {fmtCurrency(row.balance, currency, locale)}
-                  </td>
-                  {input.hasInvestments && (
-                    <td className="px-3 py-3 font-medium tabular-nums text-emerald-800">
-                      {fmtCurrency(row.balanceWithReturns, currency, locale)}
-                    </td>
-                  )}
-                  <td className="px-3 py-3 tabular-nums text-slate-500">
-                    {fmtCurrency(
-                      input.hasInvestments
-                        ? row.balanceWithReturnsReal
-                        : row.balanceReal,
-                      currency,
-                      locale,
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <h3 className="mt-6 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-          At about {fmtCurrency(savePerMonth, currency, locale)} saved per
-          month
-        </h3>
-        <ul className="mt-2 space-y-3">
-          {projLines.map((line) => (
-            <li key={line} className="flex gap-3 text-sm text-slate-600">
-              <span
-                className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500"
-                aria-hidden
-              />
-              {line}
-            </li>
-          ))}
-        </ul>
+        {/* Up to 3 action bullets */}
+        {actionBullets.length > 0 && (
+          <ul className="mt-5 space-y-2.5">
+            {actionBullets.map((text) => (
+              <li key={text} className="flex gap-3 text-sm leading-relaxed text-slate-700">
+                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" aria-hidden />
+                {text}
+              </li>
+            ))}
+          </ul>
+        )}
 
-        {furtherActions.length > 0 ? (
-          <>
-            <h3 className="mt-8 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-              Additional steps
+        {/* Savings pace */}
+        {savePerMonth > 0 && (
+          <p className="mt-5 text-xs text-slate-500">
+            At ~{fmt(savePerMonth)}/mo saved: {projLines[0]}
+          </p>
+        )}
+
+        {/* What-if slider */}
+        <div className="mt-6 border-t border-gray-100 pt-5">
+          <WhatIfPanel input={input} />
+        </div>
+      </section>
+
+      {/* ── SECTION 3: Deeper detail (collapsed) ── */}
+      <CollapsibleSection
+        title="More detail"
+        subtitle="History, savings trajectory, economic context, and your inputs."
+        defaultOpen={false}
+      >
+        <div className="space-y-8">
+
+          {/* Runway history chart */}
+          {allSnapshots && allSnapshots.length >= 2 && (
+            <div>
+              <RunwayHistoryChart
+                snapshots={allSnapshots}
+                currentRunway={m.runway}
+                targetRunway={targetRunwayMonths}
+              />
+            </div>
+          )}
+
+          {/* What could shift this */}
+          <div>
+            <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
+              What could change this read
             </h3>
-            <ul className="mt-3 space-y-2.5">
-              {furtherActions.map((text) => (
-                <li
-                  key={text}
-                  className="flex gap-3 text-sm leading-relaxed text-slate-700"
-                >
-                  <span
-                    className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500"
-                    aria-hidden
-                  />
-                  {text}
+            <ul className="mt-3 space-y-2 text-sm leading-relaxed text-slate-600">
+              {result.sensitivity.what_changes.map((line) => (
+                <li key={line} className="flex gap-2">
+                  <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-slate-400" />
+                  {line}
                 </li>
               ))}
             </ul>
-          </>
-        ) : null}
-
-        {result.status !== "ok" && (
-          <div className="mt-8 border-t border-gray-100 pt-6">
-            <Explanation result={result} contextText={explainContext} />
           </div>
-        )}
-      </section>
 
-      {/* 4. Economic context */}
-      <section className="fc-surface px-5 py-5">
-        <h2 className="text-base font-semibold text-slate-900">
-          Economic context — {macro.countryLabel}
-        </h2>
-        <p className="mt-1 text-xs leading-relaxed text-slate-500">
-          Illustrative ranges for learning—not live data, forecasts, or advice.
-        </p>
-        <p className="mt-3 text-sm font-medium text-slate-800">
-          {macro.headline}
-        </p>
-        <dl className="mt-4 space-y-4">
-          {macro.indicators.map((ind) => (
-            <div
-              key={ind.label}
-              className="rounded-xl border border-gray-100 bg-gray-50/50 px-3 py-3"
-            >
-              <dt className="text-xs font-medium text-slate-500">
-                {ind.label}
-              </dt>
-              <dd className="mt-1 text-lg font-semibold tabular-nums text-slate-900">
-                {ind.value}
-              </dd>
-              <dd className="mt-1 text-xs leading-relaxed text-slate-500">
-                {ind.detail}
-              </dd>
-            </div>
-          ))}
-        </dl>
-        <ul className="mt-5 space-y-2.5 border-t border-gray-100 pt-5">
-          {macro.bullets.map((b) => (
-            <li
-              key={b}
-              className="flex gap-3 text-sm leading-relaxed text-slate-600"
-            >
-              <span
-                className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400"
-                aria-hidden
-              />
-              {b}
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      {/* 5. User-provided data */}
-      <CollapsibleSection
-        title="Your inputs & data"
-        subtitle="What you entered in onboarding and the estimates we derive—collapsed by default."
-        defaultOpen={false}
-      >
-        <div className="space-y-6">
+          {/* Savings trajectory */}
           <div>
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-              What you told us
+            <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
+              Illustrative savings trajectory (5 years)
             </h3>
             <p className="mt-1 text-xs text-slate-400">
-              Tap "edit" on any row to update that answer and recalculate instantly.
+              Nominal growth at your current pace.{input.hasInvestments ? ` "With returns" applies ~4% to your invested portion.` : ""}{" "}
+              "Real value" deflates by ~{Math.round(inflationRate * 100)}% illustrative inflation. Not a forecast.
+            </p>
+            <div className="mt-3 overflow-x-auto rounded-xl border border-gray-100">
+              <table className="w-full min-w-[280px] text-left text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100 bg-gray-50/80">
+                    <th className="px-3 py-2.5 font-medium text-slate-500">Year</th>
+                    <th className="px-3 py-2.5 font-medium text-slate-500">Nominal</th>
+                    {input.hasInvestments && (
+                      <th className="px-3 py-2.5 font-medium text-slate-500">With returns</th>
+                    )}
+                    <th className="px-3 py-2.5 font-medium text-slate-500">Real value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {yearProjections.map((row) => (
+                    <tr key={row.label} className="border-b border-gray-50 last:border-0">
+                      <td className="px-3 py-3 text-slate-500">{row.label}</td>
+                      <td className="px-3 py-3 font-semibold tabular-nums text-slate-900">
+                        {fmtCurrency(row.balance, currency, locale)}
+                      </td>
+                      {input.hasInvestments && (
+                        <td className="px-3 py-3 font-medium tabular-nums text-emerald-800">
+                          {fmtCurrency(row.balanceWithReturns, currency, locale)}
+                        </td>
+                      )}
+                      <td className="px-3 py-3 tabular-nums text-slate-500">
+                        {fmtCurrency(
+                          input.hasInvestments ? row.balanceWithReturnsReal : row.balanceReal,
+                          currency,
+                          locale,
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Economic context */}
+          <div>
+            <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
+              Economic context — {macro.countryLabel}
+            </h3>
+            <p className="mt-1 text-xs text-slate-400">
+              Illustrative ranges — not live data or advice.
+            </p>
+            <p className="mt-3 text-sm font-medium text-slate-700">{macro.headline}</p>
+            <ul className="mt-3 space-y-2">
+              {macro.bullets.map((b) => (
+                <li key={b} className="flex gap-3 text-sm leading-relaxed text-slate-600">
+                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-300" aria-hidden />
+                  {b}
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* AI explanation (non-ok status only) */}
+          {result.status !== "ok" && (
+            <div className="border-t border-gray-100 pt-5">
+              <Explanation result={result} contextText={explainContext} />
+            </div>
+          )}
+
+          {/* Your inputs */}
+          <div>
+            <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
+              Your inputs
+            </h3>
+            <p className="mt-1 text-xs text-slate-400">
+              Tap "edit" to update any answer and recalculate.
             </p>
             <EditableProfileRows rows={profileRows} currentValues={editableParams} />
-          </div>
-          <div>
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-              Model estimates (from your ranges)
+
+            <h3 className="mt-6 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
+              Model estimates
             </h3>
             <dl className="mt-3 space-y-3">
               {estimateRows.map((row) => (
@@ -916,9 +1007,7 @@ function ClarityView({
                   className="flex flex-col gap-0.5 border-b border-gray-50 pb-3 last:border-0 sm:flex-row sm:justify-between sm:gap-4"
                 >
                   <dt className="text-sm text-slate-500">{row.label}</dt>
-                  <dd className="text-sm font-semibold tabular-nums text-slate-900">
-                    {row.value}
-                  </dd>
+                  <dd className="text-sm font-semibold tabular-nums text-slate-900">{row.value}</dd>
                 </div>
               ))}
             </dl>
@@ -944,9 +1033,22 @@ export default async function Dashboard({
   const onboarding = resolved?.onboarding ?? null;
   const userId = resolved?.userId;
   const snapshot = resolved?.snapshot;
+  const allSnapshots = resolved?.allSnapshots;
   const updatedAt = resolved?.updatedAt;
+  const userRow = resolved?.userRow;
   const checkinJustDone = sp.checkin === "1";
+  const token = typeof sp.token === "string" ? sp.token : undefined;
   const result = input ? getFinancialStatus(input) : null;
+
+  // Token gate: if the user has an access token set, require it in the URL.
+  // Anonymous users (no token) are never gated.
+  if (userId && userRow?.access_token && token !== userRow.access_token) {
+    return (
+      <main className="pb-10 pt-2">
+        <TokenGate userId={userId} />
+      </main>
+    );
+  }
 
   const suggestionLines =
     result && onboarding && input
@@ -998,8 +1100,10 @@ export default async function Dashboard({
           editableParams={editableParams}
           userId={userId}
           snapshot={snapshot}
+          allSnapshots={allSnapshots}
           checkinJustDone={checkinJustDone}
           updatedAt={updatedAt}
+          token={token}
         />
       ) : (
         <EmptyState />

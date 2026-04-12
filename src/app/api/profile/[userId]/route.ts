@@ -34,6 +34,7 @@ export async function GET(
       incomeStability: onboarding.incomeStability,
       mortgagePressure: onboarding.mortgagePressure,
       primaryFear: onboarding.primaryFear ?? null,
+      expensesOverride: onboarding.expensesOverride ?? null,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";

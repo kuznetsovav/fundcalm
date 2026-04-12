@@ -157,6 +157,7 @@ export async function POST(req: NextRequest) {
           userId: saved.userId,
           statusBadge: statusLabels[result.status] ?? result.status,
           runway: `${Math.round(result.financialMetrics.runway * 10) / 10} months`,
+          accessToken: saved.accessToken,
         });
       } catch (emailErr) {
         // Never let email failure block the response

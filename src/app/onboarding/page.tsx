@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type {
   SavingsMix,
-  SavingsRange,
   IncomeRange,
   PrimaryFear,
 } from "@/lib/engine";
@@ -24,7 +23,6 @@ import {
   SAVINGS_RATE_SLIDER_RAMP_FRACTION,
   savingsSliderPositionFromTier,
   savingsTierFromLocalTotal,
-  savingsTierMid,
   totalSavingsFromSliderPosition,
 } from "@/lib/money-tiers";
 import {
@@ -312,10 +310,13 @@ export default function Onboarding() {
 
   const totalSavingsEstimate = useMemo(() => {
     const cur = countryMeta(countryKey).currency;
-    const sav =
-      coerceSavingsRange(data.savings) ?? ("10k-25k" as SavingsRange);
-    return savingsTierMid(cur, sav);
-  }, [countryKey, data.savings]);
+    const { localAmount, openEnded } = totalSavingsFromSliderPosition(
+      cur,
+      savingsSliderPos,
+      TOTAL_SAVINGS_SLIDER_RAMP_MAX,
+    );
+    return openEnded ? savingsOpenThresholdLocal(cur) : Math.round(localAmount);
+  }, [countryKey, savingsSliderPos]);
 
   useLayoutEffect(() => {
     if (currentKey !== "income") {

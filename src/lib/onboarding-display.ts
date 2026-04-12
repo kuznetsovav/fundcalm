@@ -180,7 +180,7 @@ export function financialEstimatesForDisplay(
       value: `${runway} mo`,
     },
     {
-      label: `${computeTargetRunway(input.incomeStability, input.debtPressure)}-month cash target`,
+      label: `${computeTargetRunway(input.incomeStability, input.debtPressure, input.primary_fear)}-month cash target`,
       value: fmtCurrency(metrics.required_cash, currency, locale),
     },
     { label: "Gap vs target", value: gapLabel },

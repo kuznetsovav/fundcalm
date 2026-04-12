@@ -339,6 +339,7 @@ function evaluate(input: FinancialInput): FinancialResult {
     investments_amount: input.investments_amount,
     incomeStability: input.incomeStability,
     debtPressure: input.debtPressure,
+    primaryFear: input.primary_fear,
   });
 
   const diagnosis = classifyUser(derived);
@@ -390,6 +391,8 @@ export interface OnboardingInput {
   mortgagePressure: MortgagePressure;
   /** Main worry; defaults to making_mistake when omitted. */
   primaryFear?: PrimaryFear;
+  /** Override for monthly expenses — uses income × (1 − savingsRate) if omitted. */
+  expensesOverride?: number;
 }
 
 export const EXPENSES_MID: Record<ExpensesRange, number> = {
@@ -484,10 +487,14 @@ export function fromOnboarding(input: OnboardingInput): FinancialInput {
   const monthly_savings_rate = SAVINGS_RATE_MID[input.savingsRate];
   const monthly_income_estimate = incomeTierMid(currency, input.income);
   const spendRatio = Math.max(0.15, Math.min(0.92, 1 - monthly_savings_rate));
-  const monthly_expenses = Math.max(
+  const calculatedExpenses = Math.max(
     minMonthlyExpenseFloor(currency),
     Math.round(monthly_income_estimate * spendRatio),
   );
+  const monthly_expenses =
+    input.expensesOverride != null && input.expensesOverride > 0
+      ? Math.max(minMonthlyExpenseFloor(currency), Math.round(input.expensesOverride))
+      : calculatedExpenses;
   const country = countryLabel(code);
 
   const { cash_amount, investments_amount, hasInvestments } =

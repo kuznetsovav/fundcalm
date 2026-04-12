@@ -6,12 +6,14 @@
 const FROM = process.env.RESEND_FROM_EMAIL ?? "FundCalm <digest@fundcalm.com>";
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://fundcalm.com";
 
-function dashboardUrl(userId: string) {
-  return `${APP_URL}/dashboard?user=${userId}`;
+function dashboardUrl(userId: string, token?: string) {
+  const base = `${APP_URL}/dashboard?user=${userId}`;
+  return token ? `${base}&token=${token}` : base;
 }
 
-function checkinUrl(userId: string) {
-  return `${APP_URL}/checkin?user=${userId}`;
+function checkinUrl(userId: string, token?: string) {
+  const base = `${APP_URL}/checkin?user=${userId}`;
+  return token ? `${base}&token=${token}` : base;
 }
 
 // ---------------------------------------------------------------------------
@@ -79,11 +81,13 @@ export interface WelcomeEmailParams {
   userId: string;
   statusBadge: string;  // e.g. "Comfortable"
   runway: string;       // e.g. "4.2 months"
+  /** Access token for secure dashboard link. */
+  accessToken?: string;
 }
 
 export async function sendWelcomeEmail(params: WelcomeEmailParams) {
   const resend = await getResend();
-  const link = dashboardUrl(params.userId);
+  const link = dashboardUrl(params.userId, params.accessToken);
 
   const body = `
     <h2>Your financial clarity is saved.</h2>
@@ -137,6 +141,8 @@ export interface DigestEmailParams {
   countryLabel: string;
   /** Days since the user last updated their profile numbers. */
   daysSinceLastUpdate: number;
+  /** Access token for secure links. */
+  accessToken?: string;
 }
 
 function runwayDelta(current: string, prev: { runwayMonths: number; takenAt: string }): string {
@@ -192,8 +198,8 @@ function getDigestSubject(params: DigestEmailParams): string {
 
 export async function sendDigestEmail(params: DigestEmailParams) {
   const resend = await getResend();
-  const link = dashboardUrl(params.userId);
-  const checkin = checkinUrl(params.userId);
+  const link = dashboardUrl(params.userId, params.accessToken);
+  const checkin = checkinUrl(params.userId, params.accessToken);
 
   const deltaHtml = params.previous ? runwayDelta(params.runway, params.previous) : "";
 
@@ -233,6 +239,61 @@ export async function sendDigestEmail(params: DigestEmailParams) {
     from: FROM,
     to: params.to,
     subject: getDigestSubject(params),
+    html: baseHtml(body),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Milestone email (sent when user crosses their cash-runway target)
+// ---------------------------------------------------------------------------
+
+export interface MilestoneEmailParams {
+  to: string;
+  userId: string;
+  runwayMonths: number;
+  targetMonths: number;
+  statusBadge: string;
+  currency: string;
+  locale: string;
+  /** Access token for secure links. */
+  accessToken?: string;
+}
+
+export async function sendMilestoneEmail(params: MilestoneEmailParams) {
+  const resend = await getResend();
+  const link = dashboardUrl(params.userId, params.accessToken);
+  const checkin = checkinUrl(params.userId, params.accessToken);
+
+  const fmtMonths = (n: number) => `${Math.round(n * 10) / 10} months`;
+
+  const body = `
+    <h2>You've crossed your buffer target.</h2>
+    <p>Your cash runway just hit <strong>${fmtMonths(params.runwayMonths)}</strong> — past the <strong>${fmtMonths(params.targetMonths)}-month target</strong> you set for your situation.</p>
+    <div class="metric">
+      <span class="metric-label">Cash runway</span>
+      <span class="metric-value">${fmtMonths(params.runwayMonths)}</span>
+    </div>
+    <div class="metric">
+      <span class="metric-label">Your target</span>
+      <span class="metric-value">${fmtMonths(params.targetMonths)}</span>
+    </div>
+    <div class="metric">
+      <span class="metric-label">Status</span>
+      <span class="metric-value">${params.statusBadge}</span>
+    </div>
+    <p style="margin-top:20px">
+      This is worth pausing on. You've built a cushion that covers your target — keep it funded,
+      and any money beyond it can work harder in longer-term savings.
+    </p>
+    <a class="cta" href="${link}">See my full dashboard</a>
+    <p style="margin-top:16px;font-size:13px;color:#6b7280">
+      Want to update your numbers? <a href="${checkin}" style="color:#059669">Quick check-in here</a>.
+    </p>`;
+
+  await resend.emails.send({
+    from: FROM,
+    to: params.to,
+    subject: `You've crossed your ${fmtMonths(params.targetMonths)} buffer target`,
     html: baseHtml(body),
   });
 }

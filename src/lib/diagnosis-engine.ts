@@ -336,6 +336,7 @@ export function generateSensitivity(
 export function computeTargetRunway(
   incomeStability?: string,
   debtPressure?: string,
+  primaryFear?: string,
 ): number {
   const irregular = incomeStability === "irregular";
   const variable =
@@ -345,12 +346,21 @@ export function computeTargetRunway(
       incomeStability === "variable_worsening");
   const heavy = debtPressure === "heavy" || debtPressure === "moderate";
 
-  if (irregular && heavy) return 10;
-  if (irregular) return 8;
-  if (variable && heavy) return 8;
-  if (variable) return 7;
-  if (heavy) return 6;
-  return 4;
+  let base: number;
+  if (irregular && heavy) base = 10;
+  else if (irregular) base = 8;
+  else if (variable && heavy) base = 8;
+  else if (variable) base = 7;
+  else if (heavy) base = 6;
+  else base = 4;
+
+  // Income anxiety warrants 1 extra month of buffer; market-crash fear needs
+  // accessible cash before selling investments, so 0.5 months extra.
+  const fearExtra =
+    primaryFear === "income_loss" ? 1 :
+    primaryFear === "market_crash" ? 0.5 : 0;
+
+  return base + fearExtra;
 }
 
 export function deriveMetrics(input: {
@@ -361,6 +371,8 @@ export function deriveMetrics(input: {
   incomeStability?: string;
   /** Optional — used to personalise the cash-runway target. */
   debtPressure?: string;
+  /** Optional — fear-based target adjustment. */
+  primaryFear?: string;
 }): DiagnosisDerived {
   const liquid_savings = input.cash_amount;
   const monthly_expenses = input.monthly_expenses;
@@ -372,6 +384,7 @@ export function deriveMetrics(input: {
   const target_runway_months = computeTargetRunway(
     input.incomeStability,
     input.debtPressure,
+    input.primaryFear,
   );
   const required_cash = monthly_expenses * target_runway_months;
   const gap = required_cash - liquid_savings;
