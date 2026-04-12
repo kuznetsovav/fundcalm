@@ -14,7 +14,8 @@
       "Bash(git -C /Users/anton/Documents/fundcalm diff src/lib/dashboard-attention.ts)",
       "Bash(git -C /Users/anton/Documents/fundcalm add package.json package-lock.json src/app/api/profile/route.ts src/app/dashboard/page.tsx src/app/onboarding/page.tsx src/lib/dashboard-attention.ts src/lib/profiles.ts supabase/schema.sql src/app/api/checkin/ src/app/api/digest/ 'src/app/api/profile/[userId]/' src/app/checkin/ src/lib/email.ts src/lib/snapshots.ts vercel.json)",
       "Bash(git -C /Users/anton/Documents/fundcalm commit -m ':*)",
-      "Bash(git -C /Users/anton/Documents/fundcalm add src/lib/profiles.ts)"
+      "Bash(git -C /Users/anton/Documents/fundcalm add src/lib/profiles.ts)",
+      "Bash(git -C /Users/anton/Documents/fundcalm add src/lib/staleness.ts src/app/dashboard/page.tsx src/lib/email.ts src/app/api/digest/route.ts)"
     ]
   }
 }
