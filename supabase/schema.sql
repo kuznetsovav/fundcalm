@@ -117,5 +117,37 @@ alter table if exists users
 alter table if exists financial_profiles
   add column if not exists expenses_override numeric;
 
+-- ============================================================
+-- Monthly allocation log: track real income / spending / savings
+-- ============================================================
+
+create table if not exists monthly_allocations (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null references users(id) on delete cascade,
+  year       integer not null,
+  month      integer not null check (month between 1 and 12),
+  income     numeric,
+  spent      numeric,
+  saved      numeric,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint one_entry_per_month unique (user_id, year, month)
+);
+
+create or replace trigger monthly_allocations_updated_at
+  before update on monthly_allocations
+  for each row execute function set_updated_at();
+
+alter table monthly_allocations enable row level security;
+
+create policy "Allocations: read own"
+  on monthly_allocations for select using (user_id = auth.uid());
+
+create policy "Allocations: insert own"
+  on monthly_allocations for insert with check (user_id = auth.uid());
+
+create policy "Allocations: update own"
+  on monthly_allocations for update using (user_id = auth.uid());
+
 -- Notify PostgREST to reload the schema cache after adding columns.
 notify pgrst, 'reload schema';

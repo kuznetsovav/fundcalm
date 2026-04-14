@@ -49,6 +49,8 @@ import Explanation from "./explanation";
 import EditableProfileRows from "./editable-profile-rows";
 import InvestmentNudgeSection from "./investment-nudge";
 import { buildInvestmentNudge } from "@/lib/investment-nudge";
+import MonthlyLog from "./monthly-log";
+import { getMonthlyAllocations, type MonthlyAllocation } from "@/lib/allocations";
 
 export const metadata = { title: "Your clarity — FundCalm" };
 
@@ -259,17 +261,19 @@ async function resolveDashboardData(
   userId?: string;
   snapshot?: SnapshotRow | null;
   allSnapshots?: SnapshotRow[];
+  allocations?: MonthlyAllocation[];
   updatedAt?: string;
   userRow?: UserRow | null;
 } | null> {
   const userId = typeof sp.user === "string" ? sp.user : undefined;
   if (userId) {
     try {
-      const [row, snapshot, allSnapshots, userRow] = await Promise.all([
+      const [row, snapshot, allSnapshots, userRow, allocations] = await Promise.all([
         withTimeout(getUserProfile(userId), 5_000, null),
         withTimeout(getLatestSnapshot(userId), 3_000, null),
         withTimeout(getAllSnapshots(userId), 3_000, []),
         withTimeout(getUser(userId), 3_000, null),
+        withTimeout(getMonthlyAllocations(userId), 3_000, []),
       ]);
       if (row) {
         const onboarding = profileToOnboardingInput(row);
@@ -279,6 +283,7 @@ async function resolveDashboardData(
           userId,
           snapshot,
           allSnapshots,
+          allocations,
           updatedAt: row.updated_at,
           userRow,
         };
@@ -776,6 +781,7 @@ function ClarityView({
   userId,
   snapshot,
   allSnapshots,
+  allocations,
   checkinJustDone,
   updatedAt,
   token,
@@ -790,6 +796,7 @@ function ClarityView({
   userId?: string;
   snapshot?: SnapshotRow | null;
   allSnapshots?: SnapshotRow[];
+  allocations?: MonthlyAllocation[];
   checkinJustDone?: boolean;
   updatedAt?: string;
   token?: string;
@@ -969,6 +976,23 @@ function ClarityView({
       {/* ── SECTION 2b: Investment nudge (stable states only) ── */}
       <InvestmentNudgeSection nudge={investmentNudge} />
 
+      {/* ── SECTION 2c: Monthly flow (logged-in users only) ── */}
+      {userId ? (
+        <CollapsibleSection
+          title="Monthly flow"
+          subtitle="Log income, spending, and savings each month to track your savings rate over time."
+          defaultOpen={false}
+        >
+          <MonthlyLog
+            userId={userId}
+            initialEntries={allocations ?? []}
+            currency={currency}
+            locale={locale}
+            profileSavingsRate={input.monthly_savings_rate}
+          />
+        </CollapsibleSection>
+      ) : null}
+
       {/* ── SECTION 3: Deeper detail (collapsed) ── */}
       <CollapsibleSection
         title="More detail"
@@ -1143,6 +1167,7 @@ export default async function Dashboard({
   const userId = resolved?.userId;
   const snapshot = resolved?.snapshot;
   const allSnapshots = resolved?.allSnapshots;
+  const allocations = resolved?.allocations;
   const updatedAt = resolved?.updatedAt;
   const userRow = resolved?.userRow;
   const checkinJustDone = sp.checkin === "1";
@@ -1210,6 +1235,7 @@ export default async function Dashboard({
           userId={userId}
           snapshot={snapshot}
           allSnapshots={allSnapshots}
+          allocations={allocations}
           checkinJustDone={checkinJustDone}
           updatedAt={updatedAt}
           token={token}
