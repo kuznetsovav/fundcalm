@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
 import {
   getFinancialStatus,
   fromOnboarding,
@@ -265,7 +266,11 @@ async function resolveDashboardData(
   updatedAt?: string;
   userRow?: UserRow | null;
 } | null> {
-  const userId = typeof sp.user === "string" ? sp.user : undefined;
+  const cookieStore = await cookies();
+  const userId =
+    typeof sp.user === "string"
+      ? sp.user
+      : (cookieStore.get("fundcalm_uid")?.value ?? undefined);
   if (userId) {
     try {
       const [row, snapshot, allSnapshots, userRow, allocations] = await Promise.all([
