@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /Users/anton/Documents/fundcalm worktree list)",
+      "Bash(git -C /Users/anton/Documents/fundcalm branch -a)",
+      "Bash(git -C /Users/anton/Documents/fundcalm log --oneline -6)",
+      "Bash(git -C /Users/anton/Documents/fundcalm push origin main)"
+    ]
+  }
+}
