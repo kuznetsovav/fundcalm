@@ -10,7 +10,10 @@
       "Bash(curl -s http://localhost:3000)",
       "Bash(git -C /Users/anton/Documents/fundcalm add src/app/dashboard/page.tsx)",
       "Bash(git -C /Users/anton/Documents/fundcalm diff --cached --stat)",
-      "Bash(git -C /Users/anton/Documents/fundcalm commit -m ':*)"
+      "Bash(git -C /Users/anton/Documents/fundcalm commit -m ':*)",
+      "Bash(git -C /Users/anton/Documents/fundcalm status)",
+      "Bash(git -C /Users/anton/Documents/fundcalm diff --stat HEAD)",
+      "Bash(git -C /Users/anton/Documents/fundcalm add src/app/dashboard/page.tsx src/app/dashboard/monthly-log.tsx src/app/api/allocations/ src/lib/allocations.ts supabase/schema.sql)"
     ]
   }
 }
