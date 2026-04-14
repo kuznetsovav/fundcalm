@@ -4,7 +4,13 @@
       "Bash(git -C /Users/anton/Documents/fundcalm worktree list)",
       "Bash(git -C /Users/anton/Documents/fundcalm branch -a)",
       "Bash(git -C /Users/anton/Documents/fundcalm log --oneline -6)",
-      "Bash(git -C /Users/anton/Documents/fundcalm push origin main)"
+      "Bash(git -C /Users/anton/Documents/fundcalm push origin main)",
+      "Bash(npm run:*)",
+      "Bash(npx tsc:*)",
+      "Bash(curl -s http://localhost:3000)",
+      "Bash(git -C /Users/anton/Documents/fundcalm add src/app/dashboard/page.tsx)",
+      "Bash(git -C /Users/anton/Documents/fundcalm diff --cached --stat)",
+      "Bash(git -C /Users/anton/Documents/fundcalm commit -m ':*)"
     ]
   }
 }
