@@ -301,50 +301,6 @@ function fmtCurrency(n: number, currency: string, locale: string) {
   }).format(Math.round(Math.abs(n)));
 }
 
-/**
- * Illustrative buffer math: assumes monthly savings could go to cash; same spending.
- * Months to close gap = ceil(gap / savePerMonth); second line uses projected cash.
- */
-function projectionBullets(
-  input: Pick<FinancialInput, "cash_amount" | "monthly_expenses">,
-  savePerMonth: number,
-  metrics: FinancialMetrics,
-): string[] {
-  if (savePerMonth <= 0) {
-    return [
-      "When you can, even a small monthly amount accelerates how fast your buffer grows.",
-    ];
-  }
-  if (metrics.gap <= 0) {
-    const targetMonths = input.monthly_expenses > 0
-      ? Math.round(metrics.required_cash / input.monthly_expenses)
-      : 6;
-    return [
-      `${Math.round(metrics.runway * 10) / 10} months in cash — on track for the ${targetMonths}-month target.`,
-    ];
-  }
-  const monthsToClose = Math.ceil(metrics.gap / savePerMonth);
-  const capped = Math.min(Math.max(monthsToClose, 1), 120);
-  const projectedCash = input.cash_amount + savePerMonth * capped;
-  const projectedRunway =
-    input.monthly_expenses > 0
-      ? Math.round((projectedCash / input.monthly_expenses) * 10) / 10
-      : 0;
-
-  const first = `${capped} month${capped === 1 ? "" : "s"} at this pace to close the gap`;
-
-  if (capped === 120 && projectedCash < metrics.required_cash) {
-    return [
-      first,
-      "At this pace, cash could still sit below your target cushion after ten years—worth revisiting income, spending, or how much you can save.",
-    ];
-  }
-
-  return [
-    first,
-    `After that stretch, cash runway would be about ${projectedRunway} months at the same spending, if that monthly savings went to cash.`,
-  ];
-}
 
 const STATUS_HERO: Record<
   Status,
@@ -375,6 +331,153 @@ const STATUS_HERO: Record<
     badgeClass: "bg-red-600",
   },
 };
+
+// ── Action card: the single most prominent element in Section 2 ──
+function ActionCard({
+  result,
+  input,
+  fmt,
+  savePerMonth,
+  targetRunwayMonths,
+}: {
+  result: FinancialResult;
+  input: FinancialInput;
+  fmt: (n: number) => string;
+  savePerMonth: number;
+  targetRunwayMonths: number;
+}) {
+  const m = result.financialMetrics;
+  const dx = result.diagnosis;
+
+  type CardConfig = {
+    headline: string;
+    card: string;
+    headingColor: string;
+    showBar: boolean;
+  };
+
+  const configs: Record<Diagnosis, CardConfig> = {
+    [Diagnosis.CriticalBuffer]: {
+      headline: "Build your cash buffer — urgent",
+      card: "border-red-200 bg-red-50/70",
+      headingColor: "text-red-800",
+      showBar: true,
+    },
+    [Diagnosis.InsufficientBuffer]: {
+      headline: "Build your cash buffer",
+      card: "border-amber-200 bg-amber-50/70",
+      headingColor: "text-amber-900",
+      showBar: true,
+    },
+    [Diagnosis.LimitedBuffer]: {
+      headline: "Keep building your buffer",
+      card: "border-amber-100 bg-amber-50/40",
+      headingColor: "text-amber-800",
+      showBar: true,
+    },
+    [Diagnosis.Overinvested]: {
+      headline: "Move some savings into cash",
+      card: "border-amber-200 bg-amber-50/70",
+      headingColor: "text-amber-900",
+      showBar: true,
+    },
+    [Diagnosis.TooConservative]: {
+      headline: "Consider putting surplus to work",
+      card: "border-slate-200 bg-slate-50/60",
+      headingColor: "text-slate-700",
+      showBar: false,
+    },
+    [Diagnosis.BalancedButIdle]: {
+      headline: "Start adding to longer-term savings",
+      card: "border-slate-200 bg-slate-50/60",
+      headingColor: "text-slate-700",
+      showBar: false,
+    },
+    [Diagnosis.Healthy]: {
+      headline: "You're in good shape",
+      card: "border-emerald-200 bg-emerald-50/60",
+      headingColor: "text-emerald-800",
+      showBar: false,
+    },
+  };
+
+  const { headline, card, headingColor, showBar } = configs[dx];
+
+  // One concrete, specific sentence
+  let ctaLine: string;
+  if (
+    dx === Diagnosis.CriticalBuffer ||
+    dx === Diagnosis.InsufficientBuffer ||
+    dx === Diagnosis.LimitedBuffer
+  ) {
+    ctaLine = `You need ${fmt(m.gap)} more in accessible cash to reach your ${Math.round(targetRunwayMonths)}-month cushion.`;
+  } else if (dx === Diagnosis.Overinvested) {
+    ctaLine = `Move about ${fmt(m.gap)} from investments into accessible cash to reduce your risk.`;
+  } else if (dx === Diagnosis.TooConservative) {
+    ctaLine = `You have ${fmt(-m.gap)} above your cushion — that surplus could grow faster outside of cash.`;
+  } else if (dx === Diagnosis.BalancedButIdle) {
+    ctaLine = "Your cushion is solid. Adding gradually to longer-term savings is the natural next step.";
+  } else {
+    ctaLine = "Cash and investments are balanced for your profile. No action needed.";
+  }
+
+  // Progress toward cash target (buffer and overinvested states)
+  const progressPct =
+    m.required_cash > 0
+      ? Math.min(100, Math.round((input.cash_amount / m.required_cash) * 100))
+      : 100;
+  const barColor =
+    progressPct >= 80
+      ? "bg-emerald-500"
+      : progressPct >= 50
+        ? "bg-amber-400"
+        : "bg-red-400";
+
+  // Months to close the gap at current saving rate
+  const monthsToTarget =
+    savePerMonth > 0 && m.gap > 0
+      ? Math.min(120, Math.ceil(m.gap / savePerMonth))
+      : null;
+
+  return (
+    <div className={`rounded-xl border px-4 py-4 ${card}`}>
+      <p className={`text-sm font-semibold ${headingColor}`}>{headline}</p>
+      <p className="mt-1.5 text-sm leading-relaxed text-slate-700">{ctaLine}</p>
+
+      {/* Progress bar — only for buffer / overinvested */}
+      {showBar && (
+        <div className="mt-4">
+          <div className="mb-1.5 flex justify-between text-xs tabular-nums text-slate-400">
+            <span>{fmt(input.cash_amount)} now</span>
+            <span>{fmt(m.required_cash)} target</span>
+          </div>
+          <div className="h-2 w-full overflow-hidden rounded-full bg-white/70">
+            <div
+              className={`h-2 rounded-full ${barColor}`}
+              style={{ width: `${progressPct}%` }}
+            />
+          </div>
+          <p className="mt-1.5 text-xs tabular-nums text-slate-400">
+            {progressPct < 100
+              ? `${progressPct}% of target${
+                  monthsToTarget !== null
+                    ? ` · ~${fmt(savePerMonth)}/mo → ${monthsToTarget} month${monthsToTarget === 1 ? "" : "s"} away`
+                    : ""
+                }`
+              : "At or above target"}
+          </p>
+        </div>
+      )}
+
+      {/* Surplus label for non-buffer stable states */}
+      {!showBar && m.gap < 0 && dx !== Diagnosis.Healthy && (
+        <p className="mt-2 text-xs tabular-nums text-slate-400">
+          {fmt(-m.gap)} above your {Math.round(targetRunwayMonths)}-month cushion
+        </p>
+      )}
+    </div>
+  );
+}
 
 function EmptyState() {
   return (
@@ -698,7 +801,6 @@ function ClarityView({
   const yearProjections = projectSavingsYears(input, 5, inflationRate);
   const hero = STATUS_HERO[result.status];
   const savePerMonth = input.monthly_income_estimate * input.monthly_savings_rate;
-  const projLines = projectionBullets(input, savePerMonth, m);
   const fmt = (n: number) => fmtCurrency(n, currency, locale);
 
   const targetRunwayMonths =
@@ -721,9 +823,6 @@ function ClarityView({
     fmt,
   );
 
-  // Skip the first two items (result.action + result.insight) which are already
-  // rendered directly above. Show up to 3 of the remaining strategic bullets.
-  const actionBullets = suggestionLines.slice(2, 5);
   const profileRows = onboardingAnswersForDisplay(onboarding);
   const estimateRows = financialEstimatesForDisplay(input, m);
 
@@ -843,60 +942,28 @@ function ClarityView({
         </p>
       </section>
 
-      {/* ── SECTION 2: What this means + what to do ── */}
+      {/* ── SECTION 2: What to do ── */}
       <section className="fc-surface px-5 py-5">
 
-        {/* Core insight */}
-        <p className="text-[15px] font-medium leading-relaxed text-slate-800">
-          {result.insight}
-        </p>
+        {/* Action card — prominent, diagnosis-specific */}
+        <ActionCard
+          result={result}
+          input={input}
+          fmt={fmt}
+          savePerMonth={savePerMonth}
+          targetRunwayMonths={targetRunwayMonths}
+        />
 
-        {/* Primary action */}
-        <p className="mt-3 text-sm leading-relaxed text-slate-600">
-          {result.action}
-        </p>
-
-        {/* Fear-personalised block */}
-        <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+        {/* Fear context — one paragraph, no bullet overflow */}
+        <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50/60 px-4 py-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
             {FEAR_LABEL[input.primary_fear] ?? "Given your main worry"}
           </p>
-          <p className="mt-2 text-sm font-medium leading-relaxed text-slate-800">
+          <p className="mt-1.5 text-sm leading-relaxed text-slate-600">
             {result.projection}
           </p>
-          <ul className="mt-3 space-y-2 border-t border-slate-200/60 pt-3">
-            {fearExtraBullets(input.primary_fear, m.gap <= 0, input.hasInvestments).map((line) => (
-              <li key={line} className="flex gap-2 text-sm leading-relaxed text-slate-600">
-                <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-slate-400" />
-                {line}
-              </li>
-            ))}
-          </ul>
         </div>
 
-        {/* Up to 3 action bullets */}
-        {actionBullets.length > 0 && (
-          <ul className="mt-5 space-y-2.5">
-            {actionBullets.map((text) => (
-              <li key={text} className="flex gap-3 text-sm leading-relaxed text-slate-700">
-                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" aria-hidden />
-                {text}
-              </li>
-            ))}
-          </ul>
-        )}
-
-        {/* Savings pace */}
-        {savePerMonth > 0 && (
-          <p className="mt-5 text-xs text-slate-500">
-            At ~{fmt(savePerMonth)}/mo saved: {projLines[0]}
-          </p>
-        )}
-
-        {/* What-if slider */}
-        <div className="mt-6 border-t border-gray-100 pt-5">
-          <WhatIfPanel input={input} />
-        </div>
       </section>
 
       {/* ── SECTION 2b: Investment nudge (stable states only) ── */}
@@ -905,10 +972,30 @@ function ClarityView({
       {/* ── SECTION 3: Deeper detail (collapsed) ── */}
       <CollapsibleSection
         title="More detail"
-        subtitle="History, savings trajectory, economic context, and your inputs."
+        subtitle="Adjust expenses, worry context, history, trajectory, and your inputs."
         defaultOpen={false}
       >
         <div className="space-y-8">
+
+          {/* What-if expense slider */}
+          <div>
+            <WhatIfPanel input={input} />
+          </div>
+
+          {/* Fear bullets — expanded context for main worry */}
+          <div>
+            <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
+              More on your main worry
+            </h3>
+            <ul className="mt-3 space-y-2 text-sm leading-relaxed text-slate-600">
+              {fearExtraBullets(input.primary_fear, m.gap <= 0, input.hasInvestments).map((line) => (
+                <li key={line} className="flex gap-2">
+                  <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-slate-400" />
+                  {line}
+                </li>
+              ))}
+            </ul>
+          </div>
 
           {/* Runway history chart */}
           {allSnapshots && allSnapshots.length >= 2 && (
