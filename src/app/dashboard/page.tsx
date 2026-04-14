@@ -52,6 +52,7 @@ import InvestmentNudgeSection from "./investment-nudge";
 import { buildInvestmentNudge } from "@/lib/investment-nudge";
 import MonthlyLog from "./monthly-log";
 import { getMonthlyAllocations, type MonthlyAllocation } from "@/lib/allocations";
+import UserCookieSetter from "./user-cookie-setter";
 
 export const metadata = { title: "Your clarity — FundCalm" };
 
@@ -1228,6 +1229,8 @@ export default async function Dashboard({
 
   return (
     <main className="pb-10 pt-2">
+      {/* Refresh the fundcalm_uid cookie whenever ?user= is in the URL */}
+      <UserCookieSetter />
       {result && onboarding && input ? (
         <ClarityView
           result={result}

@@ -165,7 +165,16 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    return NextResponse.json(saved, { status: 201 });
+    // Set a long-lived cookie so the dashboard can identify the user
+    // without requiring ?user= in the URL on every visit.
+    const res = NextResponse.json(saved, { status: 201 });
+    res.cookies.set("fundcalm_uid", saved.userId, {
+      path: "/",
+      maxAge: 60 * 60 * 24 * 365, // 1 year
+      sameSite: "lax",
+      httpOnly: false, // readable client-side if needed
+    });
+    return res;
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("POST /api/profile:", message);

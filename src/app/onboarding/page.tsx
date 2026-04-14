@@ -520,9 +520,6 @@ export default function Onboarding() {
       if (res.ok) {
         const body = await res.json();
         if (body.userId) {
-          // Persist userId in a long-lived cookie so the dashboard can
-          // identify the user even without ?user= in the URL.
-          document.cookie = `fundcalm_uid=${body.userId}; path=/; max-age=31536000; SameSite=Lax`;
           router.push(`/dashboard?user=${body.userId}`);
           return;
         }
