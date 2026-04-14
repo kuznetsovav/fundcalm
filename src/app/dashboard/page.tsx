@@ -47,6 +47,8 @@ import {
 } from "@/lib/onboarding-legacy";
 import Explanation from "./explanation";
 import EditableProfileRows from "./editable-profile-rows";
+import InvestmentNudgeSection from "./investment-nudge";
+import { buildInvestmentNudge } from "@/lib/investment-nudge";
 
 export const metadata = { title: "Your clarity — FundCalm" };
 
@@ -699,6 +701,26 @@ function ClarityView({
   const projLines = projectionBullets(input, savePerMonth, m);
   const fmt = (n: number) => fmtCurrency(n, currency, locale);
 
+  const targetRunwayMonths =
+    input.monthly_expenses > 0 ? m.required_cash / input.monthly_expenses : 6;
+
+  // Investment nudge — only shown for stable states (TooConservative, BalancedButIdle, Healthy)
+  const totalAssets = input.cash_amount + input.investments_amount;
+  const investmentNudge = buildInvestmentNudge(
+    result.diagnosis,
+    {
+      cash_amount: input.cash_amount,
+      investments_amount: input.investments_amount,
+      investments_ratio: totalAssets > 0 ? input.investments_amount / totalAssets : 0,
+      required_cash: m.required_cash,
+      runway_months: m.runway,
+      target_runway_months: targetRunwayMonths,
+    },
+    input.primary_fear,
+    input.hasInvestments,
+    fmt,
+  );
+
   // Skip the first two items (result.action + result.insight) which are already
   // rendered directly above. Show up to 3 of the remaining strategic bullets.
   const actionBullets = suggestionLines.slice(2, 5);
@@ -717,9 +739,6 @@ function ClarityView({
       ? applyStalenessPenalty(result.confidence, staleness)
       : result.confidence;
   const isStale = !!(staleness && staleness.level !== "fresh");
-
-  const targetRunwayMonths =
-    input.monthly_expenses > 0 ? m.required_cash / input.monthly_expenses : 6;
 
   const bannerContent = userId
     ? (checkinJustDone
@@ -879,6 +898,9 @@ function ClarityView({
           <WhatIfPanel input={input} />
         </div>
       </section>
+
+      {/* ── SECTION 2b: Investment nudge (stable states only) ── */}
+      <InvestmentNudgeSection nudge={investmentNudge} />
 
       {/* ── SECTION 3: Deeper detail (collapsed) ── */}
       <CollapsibleSection
