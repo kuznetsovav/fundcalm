@@ -503,19 +503,12 @@ export default function Onboarding() {
     const qs = new URLSearchParams(payload).toString();
     const dashboardUrl = `/dashboard?${qs}`;
 
-    // Try saving to Supabase in the background with a timeout;
-    // navigate to dashboard regardless so the user is never stuck.
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5_000);
-
     try {
       const res = await fetch("/api/profile", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
-        signal: controller.signal,
       });
-      clearTimeout(timeout);
 
       if (res.ok) {
         const body = await res.json();
@@ -526,9 +519,11 @@ export default function Onboarding() {
         }
       }
     } catch {
-      // API unavailable or timed out — fall through to query-param navigation
+      // Network error — fall through to query-param navigation
     }
 
+    // Only reached if Supabase is not configured or returned an error.
+    // User still gets their dashboard via URL params (no persistence).
     router.push(dashboardUrl);
   }
 
