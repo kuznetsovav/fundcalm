@@ -1,8 +1,10 @@
 import Link from "next/link";
+import HomeRedirect from "./home-redirect";
 
 export default function Home() {
   return (
     <main className="flex min-h-[58dvh] flex-col justify-center">
+      <HomeRedirect />
       <p className="fc-eyebrow-left text-left text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
         Financial clarity
       </p>

@@ -54,6 +54,7 @@ import { buildInvestmentNudge } from "@/lib/investment-nudge";
 import MonthlyLog from "./monthly-log";
 import { getMonthlyAllocations, type MonthlyAllocation } from "@/lib/allocations";
 import UserCookieSetter from "./user-cookie-setter";
+import DashboardShell from "./dashboard-shell";
 
 export const metadata = { title: "Your clarity — FundCalm" };
 // Never cache — dashboard is always user-specific
@@ -1230,18 +1231,20 @@ export default async function Dashboard({
       }
     : {};
 
+  const hasProfile = !!(result && onboarding && input);
+
   return (
     <main className="pb-10 pt-2">
-      {/* Saves/reads userId from localStorage; redirects if ?user= is missing */}
-      <Suspense fallback={null}>
-        <UserCookieSetter />
-      </Suspense>
-      {result && onboarding && input ? (
+      <DashboardShell hasProfile={hasProfile} fallback={<EmptyState />}>
+        {/* Profile loaded — keep userId fresh in localStorage/cookie */}
+        <Suspense fallback={null}>
+          <UserCookieSetter />
+        </Suspense>
         <ClarityView
-          result={result}
-          input={input}
-          onboarding={onboarding}
-          countryCode={onboarding.country}
+          result={result!}
+          input={input!}
+          onboarding={onboarding!}
+          countryCode={onboarding!.country}
           suggestionLines={suggestionLines}
           explainContext={explainContext}
           editableParams={editableParams}
@@ -1253,9 +1256,7 @@ export default async function Dashboard({
           updatedAt={updatedAt}
           token={token}
         />
-      ) : (
-        <EmptyState />
-      )}
+      </DashboardShell>
     </main>
   );
 }

@@ -1,39 +1,58 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 const KEY = "fundcalm_uid";
 
+export function useStoredUserId(): string | null {
+  try { return localStorage.getItem(KEY); } catch { return null; }
+}
+
+export function saveUserId(uid: string) {
+  try { localStorage.setItem(KEY, uid); } catch {}
+  document.cookie = `${KEY}=${uid}; path=/; max-age=${60 * 60 * 24 * 365}; SameSite=Lax`;
+}
+
 /**
- * Two responsibilities:
- * 1. When ?user=UUID is in the URL — persist it to localStorage + cookie.
- * 2. When ?user= is absent and localStorage has a UUID — hard-redirect to
- *    /dashboard?user=UUID so the server component loads the user's profile.
- *    Uses window.location.replace (full page load) so the server always
- *    sees a fresh request with the correct query param.
+ * When ?user=UUID is present → persist it.
+ * When absent and localStorage has a UUID → hard-redirect (full page reload
+ * so the server component receives ?user= and loads the profile).
+ * Returns whether a redirect is pending (so the caller can show a loading state).
  */
-export default function UserCookieSetter() {
+export default function UserCookieSetter({
+  onRedirecting,
+}: {
+  onRedirecting?: () => void;
+}) {
   const searchParams = useSearchParams();
+  const [redirecting, setRedirecting] = useState(false);
 
   useEffect(() => {
     const userFromUrl = searchParams.get("user");
 
     if (userFromUrl) {
-      // Persist for future visits
-      try { localStorage.setItem(KEY, userFromUrl); } catch {}
-      document.cookie = `${KEY}=${userFromUrl}; path=/; max-age=${60 * 60 * 24 * 365}; SameSite=Lax`;
+      saveUserId(userFromUrl);
     } else {
-      // No ?user= — try localStorage then redirect (hard reload)
       try {
         const stored = localStorage.getItem(KEY);
         if (stored) {
+          setRedirecting(true);
+          onRedirecting?.();
           window.location.replace(`/dashboard?user=${stored}`);
         }
       } catch {}
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  if (redirecting) {
+    return (
+      <div className="flex min-h-[40dvh] items-center justify-center">
+        <p className="text-slate-400 text-sm">Loading your profile…</p>
+      </div>
+    );
+  }
 
   return null;
 }
