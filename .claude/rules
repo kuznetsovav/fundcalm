@@ -1,0 +1,51 @@
+# Project Rules for Claude
+
+## General
+- Always read the relevant file before editing it
+- Run `npx tsc --noEmit -p /Users/anton/Documents/fundcalm/tsconfig.json` after every non-trivial change
+- Never use `any` — use `unknown` and narrow, or proper TypeScript types
+- Never install new npm packages without asking first
+- Do not run `npm run dev` or `next dev` — the dev server is managed separately
+
+## Code style
+- Tailwind for all styling — no inline `style={}` unless absolutely necessary
+- Server components by default; add `"use client"` only when interactivity is needed
+- Keep client components small — fetch data server-side, pass as props
+- All SVG charts are inline — do not add charting libraries (recharts, victory, etc.)
+- Use `withTimeout(promise, ms, fallback)` for every DB fetch inside `resolveDashboardData`
+
+## Database
+- All schema changes go in `supabase/schema.sql` using `IF NOT EXISTS` / `IF EXISTS` guards
+- New columns: `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`
+- Never write raw SQL in application code — use the Supabase client
+- Service role key is used server-side; it bypasses RLS automatically
+- Always inform the user when a SQL migration needs to be run manually
+
+## User identity
+- User UUID flows as `?user=UUID` query param and `fundcalm_uid` cookie
+- `/api/profile` POST sets the cookie via `Set-Cookie` response header
+- `UserCookieSetter` client component keeps the cookie fresh on dashboard visits
+- Never assume a session exists — always check `userId` before DB calls
+
+## Git
+- Commit message format: short imperative title + blank line + bullet detail
+- Always append `Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>` to commits
+- Push to `origin main` after every complete feature
+- Never force-push to main
+
+## Fear-aware copy
+- All user-facing suggestion/nudge copy must vary by `primary_fear`
+- Four values: `income_loss`, `market_crash`, `making_mistake`, `missing_opportunities`
+- When adding new copy blocks, always handle all 4 fears explicitly
+
+## Diagnosis engine
+- 7 mutually exclusive states defined in `src/lib/diagnosis-engine.ts`
+- `gap` is negative when user is above target (cash > required_cash)
+- Never hardcode diagnosis-specific logic outside `diagnosis-engine.ts` or `investment-nudge.ts`
+- `getFinancialStatus()` and `buildInvestmentNudge()` are pure functions — no side effects
+
+## What NOT to do
+- Do not add authentication/session libraries — the app is intentionally sessionless
+- Do not add a database ORM — Supabase client is sufficient
+- Do not create markdown documentation files unless explicitly asked
+- Do not share or log user UUIDs, emails, or financial data in any output

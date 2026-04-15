@@ -1,0 +1,50 @@
+# Claude Skills for FundCalm
+
+## /typecheck
+Run TypeScript type-check and report any errors.
+```
+npx tsc --noEmit -p /Users/anton/Documents/fundcalm/tsconfig.json
+```
+
+## /commit
+Stage all modified tracked files, run typecheck, then commit with a proper message.
+Steps:
+1. Run typecheck — stop and fix errors if any
+2. `git -C /Users/anton/Documents/fundcalm status`
+3. `git -C /Users/anton/Documents/fundcalm diff --stat HEAD`
+4. Stage relevant files (never .env, never settings.local.json)
+5. Write commit: imperative title + blank line + detail bullets + Co-Authored-By trailer
+6. Push to origin main
+
+## /push
+Push current main to origin and confirm the remote SHA matches local HEAD.
+
+## /status
+Show:
+- `git -C /Users/anton/Documents/fundcalm log --oneline -5`
+- `git -C /Users/anton/Documents/fundcalm status`
+- Any unstaged or untracked files that look like they should be committed
+
+## /schema
+Print the pending SQL that needs to be run in the Supabase SQL Editor.
+Read `supabase/schema.sql` and identify any `CREATE TABLE`, `ALTER TABLE`, or new policy blocks that were recently added.
+
+## /snapshot
+Update `.claude/snapshot.md` with the current state of the project:
+- Last 5 commits
+- Any in-progress features
+- Pending tasks (SQL migrations, known bugs)
+- Files modified since last snapshot
+
+## /diagnose [userId]
+Given a userId, explain what diagnosis state they would be in and why, based on the engine logic in `src/lib/diagnosis-engine.ts`. Do not actually fetch from the DB — just explain the logic.
+
+## /add-fear-copy [component]
+Scaffold the fear-aware copy block for a new component. Outputs a TypeScript switch statement covering all 4 fear values: income_loss, market_crash, making_mistake, missing_opportunities.
+
+## /new-api-route [path]
+Scaffold a new Next.js App Router route handler at `src/app/api/[path]/route.ts` with:
+- GET and POST handlers
+- Input validation
+- Supabase client usage via `getSupabase()`
+- Proper error handling and NextResponse.json responses
