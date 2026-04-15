@@ -55,6 +55,8 @@ import { getMonthlyAllocations, type MonthlyAllocation } from "@/lib/allocations
 import UserCookieSetter from "./user-cookie-setter";
 
 export const metadata = { title: "Your clarity — FundCalm" };
+// Never cache — dashboard is always user-specific
+export const dynamic = "force-dynamic";
 
 const FEAR_LABEL: Record<string, string> = {
   income_loss: "Worried about income stopping or dropping",
