@@ -258,6 +258,18 @@ export async function getUserEmail(userId: string): Promise<string | null> {
   return (data as { email: string | null } | null)?.email ?? null;
 }
 
+/** Look up a user by email address — returns null if not found. */
+export async function getUserByEmail(email: string): Promise<UserRow | null> {
+  const sb = await getSupabase();
+  const { data, error } = await sb
+    .from("users")
+    .select("id, email, access_token, created_at")
+    .eq("email", email.toLowerCase().trim())
+    .maybeSingle();
+  if (error) return null;
+  return data as UserRow | null;
+}
+
 /** Fetch full user row including access token. */
 export async function getUser(userId: string): Promise<UserRow | null> {
   const sb = await getSupabase();

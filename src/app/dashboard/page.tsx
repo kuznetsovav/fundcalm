@@ -55,6 +55,7 @@ import MonthlyLog from "./monthly-log";
 import { getMonthlyAllocations, type MonthlyAllocation } from "@/lib/allocations";
 import UserCookieSetter from "./user-cookie-setter";
 import DashboardShell from "./dashboard-shell";
+import EmptyState from "./empty-state";
 
 export const metadata = { title: "Your clarity — FundCalm" };
 // Never cache — dashboard is always user-specific
@@ -490,20 +491,6 @@ function ActionCard({
           {fmt(-m.gap)} above your {Math.round(targetRunwayMonths)}-month cushion
         </p>
       )}
-    </div>
-  );
-}
-
-function EmptyState() {
-  return (
-    <div className="fc-surface mt-10 px-6 py-12 text-center">
-      <p className="text-lg font-semibold text-slate-900">No profile yet</p>
-      <p className="mt-2 text-sm text-slate-500">
-        A few questions—about two minutes.
-      </p>
-      <Link href="/onboarding" className="fc-btn-primary mt-8">
-        Get started
-      </Link>
     </div>
   );
 }

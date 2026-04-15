@@ -7,7 +7,7 @@ const COOKIE = "fundcalm_uid";
  * redirect them server-side before the page renders. This is more reliable than
  * any client-side approach because it runs before React hydrates.
  */
-export function middleware(req: NextRequest) {
+export function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   if (pathname === "/dashboard") {
