@@ -520,6 +520,7 @@ export default function Onboarding() {
       if (res.ok) {
         const body = await res.json();
         if (body.userId) {
+          try { localStorage.setItem("fundcalm_uid", body.userId); } catch {}
           router.push(`/dashboard?user=${body.userId}`);
           return;
         }

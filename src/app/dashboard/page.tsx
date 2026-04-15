@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { cookies } from "next/headers";
 import {
   getFinancialStatus,
@@ -1231,8 +1232,10 @@ export default async function Dashboard({
 
   return (
     <main className="pb-10 pt-2">
-      {/* Refresh the fundcalm_uid cookie whenever ?user= is in the URL */}
-      <UserCookieSetter />
+      {/* Saves/reads userId from localStorage; redirects if ?user= is missing */}
+      <Suspense fallback={null}>
+        <UserCookieSetter />
+      </Suspense>
       {result && onboarding && input ? (
         <ClarityView
           result={result}
