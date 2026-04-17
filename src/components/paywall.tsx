@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { isFeatureEnabled } from "@/lib/feature-flags";
 
 const BENEFITS = [
   "Real-time market updates",
@@ -9,8 +10,13 @@ const BENEFITS = [
 ];
 
 export default function Paywall({ children }: { children: React.ReactNode }) {
+  // Feature flag: when disabled (default), render children directly with no gate.
+  // Flip NEXT_PUBLIC_FEATURE_PAYWALL=1 in the environment to enable.
+  const enabled = isFeatureEnabled("paywall");
+
   const [unlocked, setUnlocked] = useState(false);
 
+  if (!enabled) return <>{children}</>;
   if (unlocked) return <>{children}</>;
 
   return (
