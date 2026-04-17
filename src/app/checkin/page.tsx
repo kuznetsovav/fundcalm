@@ -295,7 +295,7 @@ function CheckinContent() {
             </p>
             <div className="mt-8 space-y-6">
               <div className="fc-onboarding-well px-2">
-                <p className="text-center text-4xl font-semibold tabular-nums tracking-tight text-slate-900 sm:text-5xl">
+                <p className="text-center text-3xl font-semibold tabular-nums tracking-tight text-slate-900 sm:text-4xl md:text-5xl">
                   {incomeDisplay}
                 </p>
               </div>
@@ -329,7 +329,7 @@ function CheckinContent() {
             </p>
             <div className="mt-8 space-y-6">
               <div className="fc-onboarding-well px-2">
-                <p className="text-center text-4xl font-semibold tabular-nums tracking-tight text-slate-900 sm:text-5xl">
+                <p className="text-center text-3xl font-semibold tabular-nums tracking-tight text-slate-900 sm:text-4xl md:text-5xl">
                   {savingsDisplay}
                 </p>
               </div>
@@ -363,7 +363,7 @@ function CheckinContent() {
             </p>
             <div className="mt-8 space-y-6">
               <div className="fc-onboarding-well px-2">
-                <p className="text-center text-4xl font-semibold tabular-nums tracking-tight text-slate-900 sm:text-5xl">
+                <p className="text-center text-3xl font-semibold tabular-nums tracking-tight text-slate-900 sm:text-4xl md:text-5xl">
                   {savingsRateDisplay}
                 </p>
                 <p className="mt-2 text-center text-xs text-slate-500">of monthly take-home</p>
@@ -398,7 +398,7 @@ function CheckinContent() {
             </p>
             <div className="mt-8 space-y-6">
               <div className="fc-onboarding-well px-2">
-                <p className="text-center text-4xl font-semibold tabular-nums tracking-tight text-slate-900 sm:text-5xl">
+                <p className="text-center text-3xl font-semibold tabular-nums tracking-tight text-slate-900 sm:text-4xl md:text-5xl">
                   {expensesDisplay}
                 </p>
               </div>

@@ -109,7 +109,7 @@ function AllocationChart({
         <svg
           viewBox={`0 0 ${W} ${H}`}
           className="w-full"
-          style={{ minWidth: 260 }}
+          style={{ minWidth: 240 }}
           aria-label="Monthly savings rate chart"
         >
           {/* Target dashed line */}
@@ -468,7 +468,7 @@ export default function MonthlyLog({
         </div>
 
         {/* Three number fields */}
-        <div className="mt-3 grid grid-cols-3 gap-2">
+        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
           {/* Income */}
           <div>
             <label className="block text-xs text-slate-500">Income</label>
@@ -582,7 +582,7 @@ export default function MonthlyLog({
             History
           </p>
           <div className="overflow-x-auto rounded-xl border border-gray-100">
-            <table className="w-full min-w-[320px] text-left text-sm">
+            <table className="w-full text-left text-sm sm:min-w-[320px]">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50/80">
                   <th className="px-3 py-2 font-medium text-slate-400">Month</th>

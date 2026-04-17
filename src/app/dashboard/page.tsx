@@ -562,7 +562,7 @@ function RunwayHistoryChart({
       <svg
         viewBox={`0 0 ${W} ${H}`}
         className="w-full"
-        style={{ minWidth: 260 }}
+        style={{ minWidth: 240 }}
         aria-label="Runway history chart"
       >
         {/* Target runway dashed line */}
@@ -1054,7 +1054,7 @@ function ClarityView({
               "Real value" deflates by ~{Math.round(inflationRate * 100)}% illustrative inflation. Not a forecast.
             </p>
             <div className="mt-3 overflow-x-auto rounded-xl border border-gray-100">
-              <table className="w-full min-w-[280px] text-left text-sm">
+              <table className="w-full text-left text-sm sm:min-w-[280px]">
                 <thead>
                   <tr className="border-b border-gray-100 bg-gray-50/80">
                     <th className="px-3 py-2.5 font-medium text-slate-500">Year</th>
