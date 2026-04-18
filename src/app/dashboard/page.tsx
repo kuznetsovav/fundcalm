@@ -14,31 +14,17 @@ import {
   type SavingsMix,
   type MortgagePressure,
   type Status,
-  type FinancialMetrics,
 } from "@/lib/engine";
 import { getUserProfile, profileToOnboardingInput, getUser, type UserRow } from "@/lib/profiles";
-import { getLatestSnapshot, getAllSnapshots, snapshotMonthLabel, type SnapshotRow } from "@/lib/snapshots";
-import WhatIfPanel from "./what-if-panel";
+import { getLatestSnapshot, snapshotMonthLabel, type SnapshotRow } from "@/lib/snapshots";
 import {
   computeStaleness,
   applyStalenessPenalty,
   estimateDrift,
   computeBannerContent,
 } from "@/lib/staleness";
-import { financialResultToContextText } from "@/lib/explain";
-import {
-  financialEstimatesForDisplay,
-  onboardingAnswersForDisplay,
-  suggestionsForDisplay,
-} from "@/lib/onboarding-display";
-import { dashboardSituationNarrative } from "@/lib/dashboard-attention";
 import CollapsibleSection from "./collapsible-section";
 import { currencyLocaleFromCountryCode } from "@/lib/money-tiers";
-import {
-  economicOverviewForCountry,
-  illustrativeInflationRate,
-} from "@/lib/economic-context";
-import { projectSavingsYears } from "@/lib/wealth-projection";
 import { VALID_COUNTRY_CODES } from "@/lib/countries";
 import {
   coerceIncomeRange,
@@ -47,8 +33,6 @@ import {
   coerceSavingsRateRange,
   coerceSavingsRange,
 } from "@/lib/onboarding-legacy";
-import Explanation from "./explanation";
-import EditableProfileRows from "./editable-profile-rows";
 import InvestmentNudgeSection from "./investment-nudge";
 import { buildInvestmentNudge } from "@/lib/investment-nudge";
 import MonthlyLog from "./monthly-log";
@@ -60,56 +44,6 @@ import EmptyState from "./empty-state";
 export const metadata = { title: "Your clarity — FundCalm" };
 // Never cache — dashboard is always user-specific
 export const dynamic = "force-dynamic";
-
-const FEAR_LABEL: Record<string, string> = {
-  income_loss: "Worried about income stopping or dropping",
-  market_crash: "Worried about a big drop in invested savings",
-  making_mistake: "Worried about doing the wrong thing with money",
-  missing_opportunities: "Worried about missing growth opportunities",
-};
-
-/** Extra fear-specific bullets that expand the "Given your main worry" section. */
-function fearExtraBullets(
-  fear: string,
-  aboveTarget: boolean,
-  hasInvestments: boolean,
-): string[] {
-  if (fear === "income_loss") {
-    return [
-      `Your cash runway is the first line of defence if income drops — ${aboveTarget ? "you're above your target buffer, which means you have meaningful breathing room." : "building it toward your target is the most direct thing you can do for this worry."}`,
-      "A buffer equal to your target months of expenses means you can handle a gap without touching investments or taking on debt.",
-      "If income varies, keeping the buffer a little above target gives extra margin during slow patches.",
-    ];
-  }
-  if (fear === "market_crash") {
-    return [
-      hasInvestments
-        ? "A market drop affects your invested portion — your cash buffer is what keeps daily life funded without forcing you to sell at a bad time."
-        : "With little or no investments, a market crash affects you less directly — your main risk is inflation eroding the purchasing power of your cash.",
-      aboveTarget
-        ? "With your cash above target, you have a solid cushion before any invested savings would need to be touched."
-        : "A thin cash layer means a market drop could put pressure on you to sell investments at the worst moment — the buffer is your protection.",
-      "Cash and investments serve different jobs: cash for near-term spending, investments for long-run growth — keeping them separate mentally reduces panic decisions.",
-    ];
-  }
-  if (fear === "making_mistake") {
-    return [
-      "The most common mistake is acting impulsively — either moving too much money at once or freezing and doing nothing.",
-      aboveTarget
-        ? "Your numbers look reasonably structured — your job right now is to stay the course rather than overhaul."
-        : "The clearest next step is building cash toward your target — it's simple, reversible, and hard to get wrong.",
-      "Checking the same dashboard every week and worrying about small changes is often more damaging than the underlying numbers — steady habits matter more than timing.",
-    ];
-  }
-  // missing_opportunities
-  return [
-    aboveTarget
-      ? "With your buffer in place, you're in a good position to think about longer-term growth — but only for money you genuinely don't need for years."
-      : "The first opportunity to act on is building the cash buffer — a gap here creates real opportunity cost (forced sales, stress decisions) that outweighs potential investment gains.",
-    "Opportunity cost cuts both ways: money sitting in excess cash after the buffer is full is giving up potential growth; money invested before the buffer is full is giving up stability.",
-    "Small, regular additions to longer-term savings (once the buffer is solid) capture compound growth without requiring perfect timing.",
-  ];
-}
 
 const DIAGNOSIS_LABEL: Record<Diagnosis, string> = {
   [Diagnosis.CriticalBuffer]: "Critical buffer",
@@ -267,7 +201,6 @@ async function resolveDashboardData(
   financial: FinancialInput;
   userId?: string;
   snapshot?: SnapshotRow | null;
-  allSnapshots?: SnapshotRow[];
   allocations?: MonthlyAllocation[];
   updatedAt?: string;
   userRow?: UserRow | null;
@@ -279,10 +212,9 @@ async function resolveDashboardData(
       : (cookieStore.get("fundcalm_uid")?.value ?? undefined);
   if (userId) {
     try {
-      const [row, snapshot, allSnapshots, userRow, allocations] = await Promise.all([
+      const [row, snapshot, userRow, allocations] = await Promise.all([
         withTimeout(getUserProfile(userId), 5_000, null),
         withTimeout(getLatestSnapshot(userId), 3_000, null),
-        withTimeout(getAllSnapshots(userId), 3_000, []),
         withTimeout(getUser(userId), 3_000, null),
         withTimeout(getMonthlyAllocations(userId), 3_000, []),
       ]);
@@ -293,7 +225,6 @@ async function resolveDashboardData(
           financial: fromOnboarding(onboarding),
           userId,
           snapshot,
-          allSnapshots,
           allocations,
           updatedAt: row.updated_at,
           userRow,
@@ -348,154 +279,7 @@ const STATUS_HERO: Record<
   },
 };
 
-// ── Action card: the single most prominent element in Section 2 ──
-function ActionCard({
-  result,
-  input,
-  fmt,
-  savePerMonth,
-  targetRunwayMonths,
-}: {
-  result: FinancialResult;
-  input: FinancialInput;
-  fmt: (n: number) => string;
-  savePerMonth: number;
-  targetRunwayMonths: number;
-}) {
-  const m = result.financialMetrics;
-  const dx = result.diagnosis;
-
-  type CardConfig = {
-    headline: string;
-    card: string;
-    headingColor: string;
-    showBar: boolean;
-  };
-
-  const configs: Record<Diagnosis, CardConfig> = {
-    [Diagnosis.CriticalBuffer]: {
-      headline: "Build your cash buffer — urgent",
-      card: "border-red-200 bg-red-50/70",
-      headingColor: "text-red-800",
-      showBar: true,
-    },
-    [Diagnosis.InsufficientBuffer]: {
-      headline: "Build your cash buffer",
-      card: "border-amber-200 bg-amber-50/70",
-      headingColor: "text-amber-900",
-      showBar: true,
-    },
-    [Diagnosis.LimitedBuffer]: {
-      headline: "Keep building your buffer",
-      card: "border-amber-100 bg-amber-50/40",
-      headingColor: "text-amber-800",
-      showBar: true,
-    },
-    [Diagnosis.Overinvested]: {
-      headline: "Move some savings into cash",
-      card: "border-amber-200 bg-amber-50/70",
-      headingColor: "text-amber-900",
-      showBar: true,
-    },
-    [Diagnosis.TooConservative]: {
-      headline: "Consider putting surplus to work",
-      card: "border-slate-200 bg-slate-50/60",
-      headingColor: "text-slate-700",
-      showBar: false,
-    },
-    [Diagnosis.BalancedButIdle]: {
-      headline: "Start adding to longer-term savings",
-      card: "border-slate-200 bg-slate-50/60",
-      headingColor: "text-slate-700",
-      showBar: false,
-    },
-    [Diagnosis.Healthy]: {
-      headline: "You're in good shape",
-      card: "border-emerald-200 bg-emerald-50/60",
-      headingColor: "text-emerald-800",
-      showBar: false,
-    },
-  };
-
-  const { headline, card, headingColor, showBar } = configs[dx];
-
-  // One concrete, specific sentence
-  let ctaLine: string;
-  if (
-    dx === Diagnosis.CriticalBuffer ||
-    dx === Diagnosis.InsufficientBuffer ||
-    dx === Diagnosis.LimitedBuffer
-  ) {
-    ctaLine = `You need ${fmt(m.gap)} more in accessible cash to reach your ${Math.round(targetRunwayMonths)}-month cushion.`;
-  } else if (dx === Diagnosis.Overinvested) {
-    ctaLine = `Move about ${fmt(m.gap)} from investments into accessible cash to reduce your risk.`;
-  } else if (dx === Diagnosis.TooConservative) {
-    ctaLine = `You have ${fmt(-m.gap)} above your cushion — that surplus could grow faster outside of cash.`;
-  } else if (dx === Diagnosis.BalancedButIdle) {
-    ctaLine = "Your cushion is solid. Adding gradually to longer-term savings is the natural next step.";
-  } else {
-    ctaLine = "Cash and investments are balanced for your profile. No action needed.";
-  }
-
-  // Progress toward cash target (buffer and overinvested states)
-  const progressPct =
-    m.required_cash > 0
-      ? Math.min(100, Math.round((input.cash_amount / m.required_cash) * 100))
-      : 100;
-  const barColor =
-    progressPct >= 80
-      ? "bg-emerald-500"
-      : progressPct >= 50
-        ? "bg-amber-400"
-        : "bg-red-400";
-
-  // Months to close the gap at current saving rate
-  const monthsToTarget =
-    savePerMonth > 0 && m.gap > 0
-      ? Math.min(120, Math.ceil(m.gap / savePerMonth))
-      : null;
-
-  return (
-    <div className={`rounded-xl border px-4 py-4 ${card}`}>
-      <p className={`text-sm font-semibold ${headingColor}`}>{headline}</p>
-      <p className="mt-1.5 text-sm leading-relaxed text-slate-700">{ctaLine}</p>
-
-      {/* Progress bar — only for buffer / overinvested */}
-      {showBar && (
-        <div className="mt-4">
-          <div className="mb-1.5 flex justify-between text-xs tabular-nums text-slate-400">
-            <span>{fmt(input.cash_amount)} now</span>
-            <span>{fmt(m.required_cash)} target</span>
-          </div>
-          <div className="h-2 w-full overflow-hidden rounded-full bg-white/70">
-            <div
-              className={`h-2 rounded-full ${barColor}`}
-              style={{ width: `${progressPct}%` }}
-            />
-          </div>
-          <p className="mt-1.5 text-xs tabular-nums text-slate-400">
-            {progressPct < 100
-              ? `${progressPct}% of target${
-                  monthsToTarget !== null
-                    ? ` · ~${fmt(savePerMonth)}/mo → ${monthsToTarget} month${monthsToTarget === 1 ? "" : "s"} away`
-                    : ""
-                }`
-              : "At or above target"}
-          </p>
-        </div>
-      )}
-
-      {/* Surplus label for non-buffer stable states */}
-      {!showBar && m.gap < 0 && dx !== Diagnosis.Healthy && (
-        <p className="mt-2 text-xs tabular-nums text-slate-400">
-          {fmt(-m.gap)} above your {Math.round(targetRunwayMonths)}-month cushion
-        </p>
-      )}
-    </div>
-  );
-}
-
-function TokenGate({ userId }: { userId: string }) {
+function TokenGate({ userId: _userId }: { userId: string }) {
   return (
     <div className="fc-surface mt-10 px-6 py-12 text-center">
       <p className="text-lg font-semibold text-slate-900">Use your email link</p>
@@ -508,113 +292,6 @@ function TokenGate({ userId }: { userId: string }) {
       <Link href="/onboarding" className="fc-btn-primary mt-8">
         Get a new link
       </Link>
-    </div>
-  );
-}
-
-function RunwayHistoryChart({
-  snapshots,
-  currentRunway,
-  targetRunway,
-}: {
-  snapshots: SnapshotRow[];
-  currentRunway: number;
-  targetRunway: number;
-}) {
-  // Need at least 2 points to draw a line
-  const points = snapshots.filter((s) => s.runway_months != null);
-  if (points.length < 2) return null;
-
-  const W = 560;
-  const H = 110;
-  const PAD = { top: 14, right: 16, bottom: 24, left: 36 };
-  const cW = W - PAD.left - PAD.right;
-  const cH = H - PAD.top - PAD.bottom;
-
-  const allRunways = [...points.map((p) => p.runway_months as number), currentRunway, targetRunway];
-  const maxY = Math.ceil(Math.max(...allRunways) * 1.25);
-
-  function xFor(i: number) {
-    return PAD.left + (i / (points.length)) * cW;
-  }
-  function yFor(v: number) {
-    return PAD.top + (1 - v / maxY) * cH;
-  }
-
-  // Current point (right edge)
-  const currentX = PAD.left + cW;
-  const currentY = yFor(currentRunway);
-  const targetY = yFor(targetRunway);
-
-  const linePath = [
-    ...points.map((p, i) => `${i === 0 ? "M" : "L"} ${xFor(i)} ${yFor(p.runway_months as number)}`),
-    `L ${currentX} ${currentY}`,
-  ].join(" ");
-
-  // Y-axis labels (0, half, max)
-  const yLabels = [0, Math.round(maxY / 2), maxY];
-
-  return (
-    <div className="mt-5 overflow-x-auto">
-      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-        Runway history
-      </p>
-      <svg
-        viewBox={`0 0 ${W} ${H}`}
-        className="w-full"
-        style={{ minWidth: 240 }}
-        aria-label="Runway history chart"
-      >
-        {/* Target runway dashed line */}
-        <line
-          x1={PAD.left}
-          y1={targetY}
-          x2={W - PAD.right}
-          y2={targetY}
-          stroke="#059669"
-          strokeWidth={1}
-          strokeDasharray="4 3"
-          opacity={0.5}
-        />
-        <text x={W - PAD.right + 2} y={targetY + 4} fontSize={9} fill="#059669" opacity={0.7}>
-          target
-        </text>
-
-        {/* Y-axis labels */}
-        {yLabels.map((v) => (
-          <text key={v} x={PAD.left - 4} y={yFor(v) + 4} fontSize={9} fill="#9ca3af" textAnchor="end">
-            {v}
-          </text>
-        ))}
-
-        {/* Line */}
-        <path d={linePath} fill="none" stroke="#059669" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-
-        {/* Snapshot dots with tooltips */}
-        {points.map((p, i) => (
-          <circle key={p.id} cx={xFor(i)} cy={yFor(p.runway_months as number)} r={3} fill="#059669" opacity={0.7}>
-            <title>{snapshotMonthLabel(p.taken_at)}: {Math.round((p.runway_months as number) * 10) / 10} mo</title>
-          </circle>
-        ))}
-
-        {/* Current dot (highlighted) */}
-        <circle cx={currentX} cy={currentY} r={4.5} fill="#059669">
-          <title>Now: {Math.round(currentRunway * 10) / 10} mo</title>
-        </circle>
-        <circle cx={currentX} cy={currentY} r={7} fill="none" stroke="#059669" strokeWidth={1.5} opacity={0.3} />
-
-        {/* X-axis date labels (first, middle, last snapshot) */}
-        {[0, Math.floor(points.length / 2)].map((i) =>
-          points[i] ? (
-            <text key={i} x={xFor(i)} y={H - 4} fontSize={9} fill="#9ca3af" textAnchor="middle">
-              {snapshotMonthLabel(points[i].taken_at)}
-            </text>
-          ) : null
-        )}
-        <text x={currentX} y={H - 4} fontSize={9} fill="#374151" textAnchor="end">
-          now
-        </text>
-      </svg>
     </div>
   );
 }
@@ -687,15 +364,11 @@ function RunwayBar({
   targetMonths,
   projectedMonths,
   isStale,
-  runwayDiff,
-  snapshotLabel,
 }: {
   runwayMonths: number;
   targetMonths: number;
   projectedMonths?: number;
   isStale: boolean;
-  runwayDiff: number | null;
-  snapshotLabel?: string;
 }) {
   // Bar fills proportionally; cap display at 150% of target so the bar doesn't overflow on healthy users
   const displayMax = Math.max(targetMonths * 1.5, runwayMonths);
@@ -709,31 +382,25 @@ function RunwayBar({
   const barColor = isShort ? "bg-amber-400" : "bg-emerald-500";
 
   return (
-    <div className="mt-5">
-      {/* Bar */}
+    <div>
       <div className="relative h-3 w-full overflow-visible rounded-full bg-slate-100">
-        {/* Fill */}
         <div
           className={`h-3 rounded-full transition-all ${barColor}`}
           style={{ width: `${fillPct}%` }}
         />
-        {/* Projected fill (ghost) */}
         {projectedPct != null && projectedPct > fillPct && (
           <div
             className="absolute top-0 h-3 rounded-full bg-emerald-200"
             style={{ left: `${fillPct}%`, width: `${projectedPct - fillPct}%` }}
           />
         )}
-        {/* Target marker */}
         <div
           className="absolute top-[-4px] h-5 w-0.5 rounded-full bg-slate-400"
           style={{ left: `${targetPct}%` }}
         />
       </div>
 
-      {/* Labels row */}
       <div className="relative mt-2 h-5">
-        {/* Current runway label */}
         <span
           className="absolute -translate-x-1/2 whitespace-nowrap text-[11px] font-semibold tabular-nums text-slate-700"
           style={{ left: `${Math.max(5, Math.min(95, fillPct))}%` }}
@@ -741,7 +408,6 @@ function RunwayBar({
           {Math.round(runwayMonths * 10) / 10} mo
           {isStale && <span className="ml-0.5 text-slate-400">*</span>}
         </span>
-        {/* Target label */}
         <span
           className="absolute -translate-x-1/2 whitespace-nowrap text-[11px] text-slate-400"
           style={{ left: `${Math.max(5, Math.min(92, targetPct))}%` }}
@@ -749,35 +415,318 @@ function RunwayBar({
           target: {Math.round(targetMonths * 10) / 10} mo
         </span>
       </div>
+    </div>
+  );
+}
 
-      {/* Delta and projected lines */}
-      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1">
+// ── Current state tile ──
+function CurrentStateTile({
+  result,
+  fmt,
+  targetRunwayMonths,
+  isStale,
+  projectedRunway,
+  runwayDiff,
+  snapshotLabel,
+}: {
+  result: FinancialResult;
+  fmt: (n: number) => string;
+  targetRunwayMonths: number;
+  isStale: boolean;
+  projectedRunway?: number;
+  runwayDiff: number | null;
+  snapshotLabel?: string;
+}) {
+  const m = result.financialMetrics;
+  const hero = STATUS_HERO[result.status];
+
+  return (
+    <section className={`flex flex-col rounded-2xl px-5 py-6 shadow-fc-sm ${hero.border} ${hero.bg}`}>
+      <div className="flex items-center justify-between gap-2">
+        <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold text-white ${hero.badgeClass}`}>
+          <span className="h-1.5 w-1.5 rounded-full bg-white/90" />
+          {hero.badge}
+        </span>
+        <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+          Current state
+        </span>
+      </div>
+
+      <p className="mt-4 text-sm font-semibold uppercase tracking-[0.06em] text-slate-500">
+        {DIAGNOSIS_LABEL[result.diagnosis]}
+      </p>
+
+      {/* Big runway number */}
+      <div className="mt-2 flex items-baseline gap-2">
+        <span className="text-5xl font-bold tabular-nums leading-none text-slate-900">
+          {Math.round(m.runway * 10) / 10}
+        </span>
+        <span className="text-sm text-slate-500">months of runway</span>
+      </div>
+
+      <div className="mt-5">
+        <RunwayBar
+          runwayMonths={m.runway}
+          targetMonths={targetRunwayMonths}
+          projectedMonths={projectedRunway}
+          isStale={isStale}
+        />
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1">
+        {m.gap > 0 ? (
+          <p className="text-sm tabular-nums text-slate-700">
+            <span className="font-semibold text-red-700">{fmt(m.gap)}</span>
+            <span className="ml-1 text-slate-500">short of target</span>
+          </p>
+        ) : (
+          <p className="text-sm font-medium text-emerald-700">
+            At or above target buffer
+          </p>
+        )}
         {runwayDiff !== null && Math.abs(runwayDiff) >= 0.1 && snapshotLabel && (
           <p className={`text-xs font-medium tabular-nums ${runwayDiff > 0 ? "text-emerald-700" : "text-red-600"}`}>
             {runwayDiff > 0 ? "↑" : "↓"} {runwayDiff > 0 ? "+" : ""}{runwayDiff} mo since {snapshotLabel}
           </p>
         )}
-        {projectedMonths != null && isStale && (
-          <p className="text-xs text-slate-400">
-            ~{Math.round(projectedMonths * 10) / 10} mo estimated now
-          </p>
-        )}
       </div>
-    </div>
+    </section>
+  );
+}
+
+type Scenario = {
+  label: string;
+  headline: string;
+  detail: string;
+  pct: number;
+};
+
+function suggestionScenarios({
+  result,
+  input,
+  fmt,
+  savePerMonth,
+  targetRunwayMonths,
+}: {
+  result: FinancialResult;
+  input: FinancialInput;
+  fmt: (n: number) => string;
+  savePerMonth: number;
+  targetRunwayMonths: number;
+}): { headline: string; positive: Scenario; negative: Scenario } {
+  const m = result.financialMetrics;
+  const dx = result.diagnosis;
+  const progressPct =
+    m.required_cash > 0
+      ? Math.min(100, Math.round((input.cash_amount / m.required_cash) * 100))
+      : 100;
+  const monthsToTarget =
+    savePerMonth > 0 && m.gap > 0
+      ? Math.min(120, Math.ceil(m.gap / savePerMonth))
+      : null;
+  const targetMo = Math.round(targetRunwayMonths);
+
+  if (
+    dx === Diagnosis.CriticalBuffer ||
+    dx === Diagnosis.InsufficientBuffer ||
+    dx === Diagnosis.LimitedBuffer
+  ) {
+    return {
+      headline:
+        dx === Diagnosis.CriticalBuffer
+          ? "Build your cash buffer — urgent"
+          : dx === Diagnosis.InsufficientBuffer
+            ? "Build your cash buffer"
+            : "Keep building your buffer",
+      positive: {
+        label: "If you act",
+        headline:
+          savePerMonth > 0 && monthsToTarget
+            ? `Save ~${fmt(savePerMonth)}/mo`
+            : `Add ~${fmt(m.gap)} to cash`,
+        detail:
+          monthsToTarget !== null
+            ? `Reach your ${targetMo}-month buffer in ~${monthsToTarget} month${monthsToTarget === 1 ? "" : "s"}.`
+            : `Close the ${fmt(m.gap)} gap to hit your ${targetMo}-month buffer.`,
+        pct: 100,
+      },
+      negative: {
+        label: "If you don't",
+        headline: `${fmt(m.gap)} short of target`,
+        detail: `Stuck at ${Math.round(m.runway * 10) / 10} of ${targetMo} months — one income shock hits hard.`,
+        pct: Math.max(6, progressPct),
+      },
+    };
+  }
+
+  if (dx === Diagnosis.Overinvested) {
+    return {
+      headline: "Move some savings into cash",
+      positive: {
+        label: "If you act",
+        headline: `Shift ~${fmt(m.gap)} into cash`,
+        detail: `Restores a ${targetMo}-month cash cushion — you won't be forced to sell at a bad time.`,
+        pct: 100,
+      },
+      negative: {
+        label: "If you don't",
+        headline: "Exposed to timing risk",
+        detail: `${Math.round(m.runway * 10) / 10} months of cash means a market drop could force selling.`,
+        pct: Math.max(10, Math.min(60, progressPct)),
+      },
+    };
+  }
+
+  if (dx === Diagnosis.TooConservative) {
+    const surplus = -m.gap;
+    return {
+      headline: "Consider putting surplus to work",
+      positive: {
+        label: "If you act",
+        headline: `Invest ~${fmt(surplus)} gradually`,
+        detail: "Long-run growth on surplus cash outpaces inflation.",
+        pct: 100,
+      },
+      negative: {
+        label: "If you don't",
+        headline: "Cash loses purchasing power",
+        detail: "Excess cash sitting idle is eroded by inflation each year.",
+        pct: 35,
+      },
+    };
+  }
+
+  if (dx === Diagnosis.BalancedButIdle) {
+    return {
+      headline: "Start adding to longer-term savings",
+      positive: {
+        label: "If you act",
+        headline: `Invest a small monthly amount`,
+        detail: "Captures compounding growth without timing the market.",
+        pct: 100,
+      },
+      negative: {
+        label: "If you don't",
+        headline: "Potential growth left idle",
+        detail: "Cushion stays strong, but long-term upside is limited.",
+        pct: 45,
+      },
+    };
+  }
+
+  // Healthy
+  return {
+    headline: "You're in good shape",
+    positive: {
+      label: "If you stay the course",
+      headline: "Trajectory stays strong",
+      detail: "Cash and investments are well-balanced for your profile.",
+      pct: 100,
+    },
+    negative: {
+      label: "Watch for",
+      headline: "Big life changes",
+      detail: "Re-check after income shifts, house moves, or new goals.",
+      pct: 75,
+    },
+  };
+}
+
+// ── Suggestions tile with positive / negative paths ──
+function SuggestionsTile({
+  result,
+  input,
+  fmt,
+  savePerMonth,
+  targetRunwayMonths,
+}: {
+  result: FinancialResult;
+  input: FinancialInput;
+  fmt: (n: number) => string;
+  savePerMonth: number;
+  targetRunwayMonths: number;
+}) {
+  const { headline, positive, negative } = suggestionScenarios({
+    result,
+    input,
+    fmt,
+    savePerMonth,
+    targetRunwayMonths,
+  });
+
+  return (
+    <section className="flex flex-col rounded-2xl border border-slate-200 bg-white px-5 py-6 shadow-fc-sm">
+      <div className="flex items-center justify-between gap-2">
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-900 px-2.5 py-1 text-xs font-semibold text-white">
+          <span className="h-1.5 w-1.5 rounded-full bg-white/90" />
+          Next step
+        </span>
+        <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+          Suggestions
+        </span>
+      </div>
+
+      <p className="mt-4 text-lg font-semibold leading-snug tracking-tight text-slate-900">
+        {headline}
+      </p>
+
+      <div className="mt-5 space-y-3">
+        {/* Positive path */}
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-3">
+          <div className="flex items-center gap-1.5">
+            <svg viewBox="0 0 20 20" className="h-3.5 w-3.5 text-emerald-600" aria-hidden>
+              <path
+                fill="currentColor"
+                d="M10 2.5a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15Zm3.5 6.3-4.2 4.2a.8.8 0 0 1-1.1 0L6.5 11.3a.8.8 0 0 1 1.1-1.1l1.7 1.7 3.7-3.7a.8.8 0 0 1 1.1 1.1Z"
+              />
+            </svg>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-emerald-700">
+              {positive.label}
+            </p>
+          </div>
+          <p className="mt-1.5 text-sm font-semibold text-slate-900">{positive.headline}</p>
+          <p className="mt-1 text-xs leading-relaxed text-emerald-800/80">{positive.detail}</p>
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-emerald-100">
+            <div
+              className="h-1.5 rounded-full bg-emerald-500"
+              style={{ width: `${positive.pct}%` }}
+            />
+          </div>
+        </div>
+
+        {/* Negative path */}
+        <div className="rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3">
+          <div className="flex items-center gap-1.5">
+            <svg viewBox="0 0 20 20" className="h-3.5 w-3.5 text-amber-600" aria-hidden>
+              <path
+                fill="currentColor"
+                d="M10 2.2c.5 0 1 .3 1.3.8l7.3 12.5c.6 1-.2 2.2-1.3 2.2H2.7c-1.1 0-1.9-1.2-1.3-2.2L8.7 3a1.5 1.5 0 0 1 1.3-.8Zm0 5.3a.9.9 0 0 0-.9.9v3.2a.9.9 0 1 0 1.8 0V8.4a.9.9 0 0 0-.9-.9Zm0 7.1a1 1 0 1 0 0 2 1 1 0 0 0 0-2Z"
+              />
+            </svg>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-amber-700">
+              {negative.label}
+            </p>
+          </div>
+          <p className="mt-1.5 text-sm font-semibold text-slate-900">{negative.headline}</p>
+          <p className="mt-1 text-xs leading-relaxed text-amber-800/80">{negative.detail}</p>
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-amber-100">
+            <div
+              className="h-1.5 rounded-full bg-amber-500"
+              style={{ width: `${negative.pct}%` }}
+            />
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
 function ClarityView({
   result,
   input,
-  onboarding,
   countryCode,
-  suggestionLines,
-  explainContext,
-  editableParams,
   userId,
   snapshot,
-  allSnapshots,
   allocations,
   checkinJustDone,
   updatedAt,
@@ -787,12 +736,8 @@ function ClarityView({
   input: FinancialInput;
   onboarding: OnboardingInput;
   countryCode: string;
-  suggestionLines: string[];
-  explainContext?: string;
-  editableParams: Record<string, string>;
   userId?: string;
   snapshot?: SnapshotRow | null;
-  allSnapshots?: SnapshotRow[];
   allocations?: MonthlyAllocation[];
   checkinJustDone?: boolean;
   updatedAt?: string;
@@ -800,17 +745,12 @@ function ClarityView({
 }) {
   const { currency, locale } = currencyLocaleFromCountryCode(countryCode);
   const m = result.financialMetrics;
-  const macro = economicOverviewForCountry(countryCode);
-  const inflationRate = illustrativeInflationRate(countryCode);
-  const yearProjections = projectSavingsYears(input, 5, inflationRate);
-  const hero = STATUS_HERO[result.status];
   const savePerMonth = input.monthly_income_estimate * input.monthly_savings_rate;
   const fmt = (n: number) => fmtCurrency(n, currency, locale);
 
   const targetRunwayMonths =
     input.monthly_expenses > 0 ? m.required_cash / input.monthly_expenses : 6;
 
-  // Investment nudge — only shown for stable states (TooConservative, BalancedButIdle, Healthy)
   const totalAssets = input.cash_amount + input.investments_amount;
   const investmentNudge = buildInvestmentNudge(
     result.diagnosis,
@@ -826,9 +766,6 @@ function ClarityView({
     input.hasInvestments,
     fmt,
   );
-
-  const profileRows = onboardingAnswersForDisplay(onboarding);
-  const estimateRows = financialEstimatesForDisplay(input, m);
 
   const runwayDiff = snapshot?.runway_months != null
     ? Math.round((m.runway - snapshot.runway_months) * 10) / 10
@@ -883,7 +820,6 @@ function ClarityView({
         </Link>
       </header>
 
-      {/* Update banner */}
       {userId && bannerContent && (
         <CheckinBanner
           userId={userId}
@@ -893,87 +829,39 @@ function ClarityView({
         />
       )}
 
-      {/* ── SECTION 1: Status card ── */}
-      <section className={`rounded-2xl px-5 py-6 shadow-fc-sm ${hero.border} ${hero.bg}`}>
-
-        {/* Badge + diagnosis label */}
-        <div className="flex flex-wrap items-center gap-2">
-          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold text-white ${hero.badgeClass}`}>
-            <span className="h-1.5 w-1.5 rounded-full bg-white/90" />
-            {hero.badge}
-          </span>
-          <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
-            {DIAGNOSIS_LABEL[result.diagnosis]}
-          </span>
-        </div>
-
-        {/* One-sentence summary */}
-        <p className="mt-3 text-lg font-semibold leading-snug tracking-tight text-slate-900 sm:text-xl">
-          {result.summary}
-        </p>
-
-        {/* Runway bar */}
-        <RunwayBar
-          runwayMonths={m.runway}
-          targetMonths={targetRunwayMonths}
-          projectedMonths={drift?.meaningful ? drift.projectedRunwayMonths : undefined}
+      {/* ── TWO TILES: Current state + Suggestions ── */}
+      <div className="grid gap-4 md:grid-cols-2">
+        <CurrentStateTile
+          result={result}
+          fmt={fmt}
+          targetRunwayMonths={targetRunwayMonths}
           isStale={isStale}
+          projectedRunway={drift?.meaningful ? drift.projectedRunwayMonths : undefined}
           runwayDiff={runwayDiff}
           snapshotLabel={snapshot?.taken_at ? snapshotMonthLabel(snapshot.taken_at) : undefined}
         />
-        {isStale && (
-          <p className="mt-1 text-xs text-slate-400">
-            * Based on figures from {staleness!.label}. Update for a fresh read.
-          </p>
-        )}
-
-        {/* Gap stat — only when meaningful */}
-        {m.gap > 0 && (
-          <p className="mt-4 text-sm text-slate-600">
-            <span className="font-semibold tabular-nums text-slate-900">{fmt(m.gap)}</span>
-            {" "}short of your target buffer.
-          </p>
-        )}
-        {m.gap <= 0 && (
-          <p className="mt-4 text-sm text-slate-600">
-            You're at or above your target buffer.
-          </p>
-        )}
-
-        {/* Confidence — inline, unobtrusive */}
-        <p className={`mt-3 text-xs ${confidenceColor}`}>
-          {displayConfidence.reason}
-        </p>
-      </section>
-
-      {/* ── SECTION 2: What to do ── */}
-      <section className="fc-surface px-5 py-5">
-
-        {/* Action card — prominent, diagnosis-specific */}
-        <ActionCard
+        <SuggestionsTile
           result={result}
           input={input}
           fmt={fmt}
           savePerMonth={savePerMonth}
           targetRunwayMonths={targetRunwayMonths}
         />
+      </div>
 
-        {/* Fear context — one paragraph, no bullet overflow */}
-        <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50/60 px-4 py-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-            {FEAR_LABEL[input.primary_fear] ?? "Given your main worry"}
-          </p>
-          <p className="mt-1.5 text-sm leading-relaxed text-slate-600">
-            {result.projection}
-          </p>
-        </div>
+      {isStale && (
+        <p className="text-xs text-slate-400">
+          * Based on figures from {staleness!.label}. Update for a fresh read.
+        </p>
+      )}
+      <p className={`text-xs ${confidenceColor}`}>
+        {displayConfidence.reason}
+      </p>
 
-      </section>
-
-      {/* ── SECTION 2b: Investment nudge (stable states only) ── */}
+      {/* Investment nudge — only for stable states */}
       <InvestmentNudgeSection nudge={investmentNudge} />
 
-      {/* ── SECTION 2c: Monthly flow (logged-in users only) ── */}
+      {/* Monthly flow */}
       {userId ? (
         <CollapsibleSection
           title="Monthly flow"
@@ -989,161 +877,6 @@ function ClarityView({
           />
         </CollapsibleSection>
       ) : null}
-
-      {/* ── SECTION 3: Deeper detail (collapsed) ── */}
-      <CollapsibleSection
-        title="More detail"
-        subtitle="Adjust expenses, worry context, history, trajectory, and your inputs."
-        defaultOpen={false}
-      >
-        <div className="space-y-8">
-
-          {/* What-if expense slider */}
-          <div>
-            <WhatIfPanel input={input} />
-          </div>
-
-          {/* Fear bullets — expanded context for main worry */}
-          <div>
-            <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-              More on your main worry
-            </h3>
-            <ul className="mt-3 space-y-2 text-sm leading-relaxed text-slate-600">
-              {fearExtraBullets(input.primary_fear, m.gap <= 0, input.hasInvestments).map((line) => (
-                <li key={line} className="flex gap-2">
-                  <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-slate-400" />
-                  {line}
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          {/* Runway history chart */}
-          {allSnapshots && allSnapshots.length >= 2 && (
-            <div>
-              <RunwayHistoryChart
-                snapshots={allSnapshots}
-                currentRunway={m.runway}
-                targetRunway={targetRunwayMonths}
-              />
-            </div>
-          )}
-
-          {/* What could shift this */}
-          <div>
-            <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-              What could change this read
-            </h3>
-            <ul className="mt-3 space-y-2 text-sm leading-relaxed text-slate-600">
-              {result.sensitivity.what_changes.map((line) => (
-                <li key={line} className="flex gap-2">
-                  <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-slate-400" />
-                  {line}
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          {/* Savings trajectory */}
-          <div>
-            <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-              Illustrative savings trajectory (5 years)
-            </h3>
-            <p className="mt-1 text-xs text-slate-400">
-              Nominal growth at your current pace.{input.hasInvestments ? ` "With returns" applies ~4% to your invested portion.` : ""}{" "}
-              "Real value" deflates by ~{Math.round(inflationRate * 100)}% illustrative inflation. Not a forecast.
-            </p>
-            <div className="mt-3 overflow-x-auto rounded-xl border border-gray-100">
-              <table className="w-full text-left text-sm sm:min-w-[280px]">
-                <thead>
-                  <tr className="border-b border-gray-100 bg-gray-50/80">
-                    <th className="px-3 py-2.5 font-medium text-slate-500">Year</th>
-                    <th className="px-3 py-2.5 font-medium text-slate-500">Nominal</th>
-                    {input.hasInvestments && (
-                      <th className="px-3 py-2.5 font-medium text-slate-500">With returns</th>
-                    )}
-                    <th className="px-3 py-2.5 font-medium text-slate-500">Real value</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {yearProjections.map((row) => (
-                    <tr key={row.label} className="border-b border-gray-50 last:border-0">
-                      <td className="px-3 py-3 text-slate-500">{row.label}</td>
-                      <td className="px-3 py-3 font-semibold tabular-nums text-slate-900">
-                        {fmtCurrency(row.balance, currency, locale)}
-                      </td>
-                      {input.hasInvestments && (
-                        <td className="px-3 py-3 font-medium tabular-nums text-emerald-800">
-                          {fmtCurrency(row.balanceWithReturns, currency, locale)}
-                        </td>
-                      )}
-                      <td className="px-3 py-3 tabular-nums text-slate-500">
-                        {fmtCurrency(
-                          input.hasInvestments ? row.balanceWithReturnsReal : row.balanceReal,
-                          currency,
-                          locale,
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Economic context */}
-          <div>
-            <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-              Economic context — {macro.countryLabel}
-            </h3>
-            <p className="mt-1 text-xs text-slate-400">
-              Illustrative ranges — not live data or advice.
-            </p>
-            <p className="mt-3 text-sm font-medium text-slate-700">{macro.headline}</p>
-            <ul className="mt-3 space-y-2">
-              {macro.bullets.map((b) => (
-                <li key={b} className="flex gap-3 text-sm leading-relaxed text-slate-600">
-                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-300" aria-hidden />
-                  {b}
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          {/* AI explanation (non-ok status only) */}
-          {result.status !== "ok" && (
-            <div className="border-t border-gray-100 pt-5">
-              <Explanation result={result} contextText={explainContext} />
-            </div>
-          )}
-
-          {/* Your inputs */}
-          <div>
-            <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-              Your inputs
-            </h3>
-            <p className="mt-1 text-xs text-slate-400">
-              Tap "edit" to update any answer and recalculate.
-            </p>
-            <EditableProfileRows rows={profileRows} currentValues={editableParams} />
-
-            <h3 className="mt-6 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-              Model estimates
-            </h3>
-            <dl className="mt-3 space-y-3">
-              {estimateRows.map((row) => (
-                <div
-                  key={row.label}
-                  className="flex flex-col gap-0.5 border-b border-gray-50 pb-3 last:border-0 sm:flex-row sm:justify-between sm:gap-4"
-                >
-                  <dt className="text-sm text-slate-500">{row.label}</dt>
-                  <dd className="text-sm font-semibold tabular-nums text-slate-900">{row.value}</dd>
-                </div>
-              ))}
-            </dl>
-          </div>
-        </div>
-      </CollapsibleSection>
 
       <Link href="/onboarding" className="fc-link-muted inline-block py-2">
         Redo onboarding &rarr;
@@ -1163,7 +896,6 @@ export default async function Dashboard({
   const onboarding = resolved?.onboarding ?? null;
   const userId = resolved?.userId;
   const snapshot = resolved?.snapshot;
-  const allSnapshots = resolved?.allSnapshots;
   const allocations = resolved?.allocations;
   const updatedAt = resolved?.updatedAt;
   const userRow = resolved?.userRow;
@@ -1172,7 +904,6 @@ export default async function Dashboard({
   const result = input ? getFinancialStatus(input) : null;
 
   // Token gate: if the user has an access token set, require it in the URL.
-  // Anonymous users (no token) are never gated.
   if (userId && userRow?.access_token && token !== userRow.access_token) {
     return (
       <main className="pb-10 pt-2">
@@ -1181,49 +912,11 @@ export default async function Dashboard({
     );
   }
 
-  const suggestionLines =
-    result && onboarding && input
-      ? suggestionsForDisplay(result, input, onboarding)
-      : [];
-
-  const explainLocale = onboarding
-    ? currencyLocaleFromCountryCode(onboarding.country)
-    : { currency: "USD", locale: "en-US" };
-
-  const explainNumeric =
-    result && input
-      ? dashboardSituationNarrative(input, result.financialMetrics, (n) =>
-          fmtCurrency(n, explainLocale.currency, explainLocale.locale),
-        )
-      : undefined;
-
-  const explainContext =
-    result && input
-      ? financialResultToContextText(result, input, explainNumeric)
-      : result
-        ? financialResultToContextText(result, undefined, explainNumeric)
-        : undefined;
-
-  // Build a flat string map of current onboarding params for inline editing.
-  const editableParams: Record<string, string> = onboarding
-    ? {
-        income: onboarding.income,
-        savings: onboarding.savings,
-        savingsRate: onboarding.savingsRate,
-        country: onboarding.country,
-        savingsMix: onboarding.savingsMix,
-        incomeStability: onboarding.incomeStability,
-        mortgage: onboarding.mortgagePressure,
-        primaryFear: onboarding.primaryFear ?? "making_mistake",
-      }
-    : {};
-
   const hasProfile = !!(result && onboarding && input);
 
   return (
     <main className="pb-10 pt-2">
       <DashboardShell hasProfile={hasProfile} fallback={<EmptyState />}>
-        {/* Profile loaded — keep userId fresh in localStorage/cookie */}
         <Suspense fallback={null}>
           <UserCookieSetter />
         </Suspense>
@@ -1232,12 +925,8 @@ export default async function Dashboard({
           input={input!}
           onboarding={onboarding!}
           countryCode={onboarding!.country}
-          suggestionLines={suggestionLines}
-          explainContext={explainContext}
-          editableParams={editableParams}
           userId={userId}
           snapshot={snapshot}
-          allSnapshots={allSnapshots}
           allocations={allocations}
           checkinJustDone={checkinJustDone}
           updatedAt={updatedAt}
