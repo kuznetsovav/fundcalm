@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test:diagnosis": "NODE_ENV=test npx --yes tsx src/lib/engine.ts"
+    "test:diagnosis": "NODE_ENV=test npx --yes tsx src/lib/engine.ts",
+    "test:dca": "NODE_ENV=test npx --yes tsx src/lib/dca-engine.ts"
   },
   "dependencies": {
     "@babel/runtime": "^7.29.2",
@@ -16,7 +17,9 @@
     "openai": "^6.33.0",
     "react": "^18",
     "react-dom": "^18",
-    "resend": "^6.10.0"
+    "recharts": "^3.8.1",
+    "resend": "^6.10.0",
+    "yahoo-finance2": "^3.14.0"
   },
   "devDependencies": {
     "@types/node": "^20",

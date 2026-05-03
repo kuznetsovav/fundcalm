@@ -34,6 +34,7 @@ import {
   coerceSavingsRange,
 } from "@/lib/onboarding-legacy";
 import InvestmentNudgeSection from "./investment-nudge";
+import DcaCta from "./dca-cta";
 import { buildInvestmentNudge } from "@/lib/investment-nudge";
 import MonthlyLog from "./monthly-log";
 import { getMonthlyAllocations, type MonthlyAllocation } from "@/lib/allocations";
@@ -860,6 +861,9 @@ function ClarityView({
 
       {/* Investment nudge — only for stable states */}
       <InvestmentNudgeSection nudge={investmentNudge} />
+
+      {/* DCA plan CTA — always visible when we have a userId */}
+      {userId && <DcaCta userId={userId} token={token} />}
 
       {/* Monthly flow */}
       {userId ? (
