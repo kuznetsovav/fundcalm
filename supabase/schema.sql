@@ -181,5 +181,34 @@ create policy "DCA plans: insert own"
 create policy "DCA plans: update own"
   on dca_plans for update using (user_id = auth.uid());
 
+-- ============================================================
+-- Lesson progress: per-user tracking of completed lessons
+-- Lesson content lives in the codebase (src/lib/lessons), not here.
+-- ============================================================
+
+create table if not exists lesson_progress (
+  id           uuid primary key default gen_random_uuid(),
+  user_id      uuid not null references users(id) on delete cascade,
+  slug         text not null,
+  status       text not null default 'completed' check (status in ('completed', 'started')),
+  reflection   text,
+  completed_at timestamptz not null default now(),
+  constraint one_progress_per_lesson unique (user_id, slug)
+);
+
+create index if not exists lesson_progress_user_idx
+  on lesson_progress (user_id);
+
+alter table lesson_progress enable row level security;
+
+create policy "Lesson progress: read own"
+  on lesson_progress for select using (user_id = auth.uid());
+
+create policy "Lesson progress: insert own"
+  on lesson_progress for insert with check (user_id = auth.uid());
+
+create policy "Lesson progress: update own"
+  on lesson_progress for update using (user_id = auth.uid());
+
 -- Notify PostgREST to reload the schema cache after adding columns.
 notify pgrst, 'reload schema';

@@ -13,13 +13,11 @@ import {
   type CashRange,
   type SavingsMix,
   type MortgagePressure,
-  type Status,
 } from "@/lib/engine";
 import { getUserProfile, profileToOnboardingInput, getUser, type UserRow } from "@/lib/profiles";
 import { getLatestSnapshot, snapshotMonthLabel, type SnapshotRow } from "@/lib/snapshots";
 import {
   computeStaleness,
-  applyStalenessPenalty,
   estimateDrift,
   computeBannerContent,
 } from "@/lib/staleness";
@@ -33,26 +31,35 @@ import {
   coerceSavingsRateRange,
   coerceSavingsRange,
 } from "@/lib/onboarding-legacy";
-import InvestmentNudgeSection from "./investment-nudge";
-import DcaCta from "./dca-cta";
-import { buildInvestmentNudge } from "@/lib/investment-nudge";
 import MonthlyLog from "./monthly-log";
 import { getMonthlyAllocations, type MonthlyAllocation } from "@/lib/allocations";
 import UserCookieSetter from "./user-cookie-setter";
 import DashboardShell from "./dashboard-shell";
 import EmptyState from "./empty-state";
+import {
+  buildCurriculumPath,
+  nextLesson,
+  pillarProgress,
+  type PillarProgress,
+} from "@/lib/curriculum";
+import { getCompletedSlugs } from "@/lib/lesson-progress";
+import {
+  PILLAR_LABEL,
+  PILLAR_TAGLINE,
+  type Lesson,
+  type Pillar,
+} from "@/lib/lessons/types";
 
-export const metadata = { title: "Your clarity — FundCalm" };
-// Never cache — dashboard is always user-specific
+export const metadata = { title: "Your path — FundCalm" };
 export const dynamic = "force-dynamic";
 
 const DIAGNOSIS_LABEL: Record<Diagnosis, string> = {
   [Diagnosis.CriticalBuffer]: "Critical buffer",
   [Diagnosis.InsufficientBuffer]: "Insufficient buffer",
   [Diagnosis.LimitedBuffer]: "Limited buffer",
-  [Diagnosis.Overinvested]: "Cash runway vs invested savings",
+  [Diagnosis.Overinvested]: "Cash short, heavy invested",
   [Diagnosis.TooConservative]: "Heavy on cash",
-  [Diagnosis.BalancedButIdle]: "Strong cushion, light long-term savings",
+  [Diagnosis.BalancedButIdle]: "Strong cushion, light long-term",
   [Diagnosis.Healthy]: "Balanced",
 };
 
@@ -120,12 +127,7 @@ function parseOnboarding(
   const savings = coerceSavingsRange(savingsRaw);
   const savingsRate = coerceSavingsRateRange(savingsRateRaw);
 
-  if (
-    !income ||
-    !savings ||
-    !savingsRate ||
-    !VALID_COUNTRY_CODES.has(country)
-  ) {
+  if (!income || !savings || !savingsRate || !VALID_COUNTRY_CODES.has(country)) {
     return null;
   }
 
@@ -179,7 +181,6 @@ function parseOnboarding(
   };
 }
 
-/** Avoid hanging SSR when Supabase is slow or unreachable. */
 function withTimeout<T>(promise: Promise<T>, ms: number, onTimeout: T): Promise<T> {
   return new Promise((resolve) => {
     const id = setTimeout(() => resolve(onTimeout), ms);
@@ -205,6 +206,7 @@ async function resolveDashboardData(
   allocations?: MonthlyAllocation[];
   updatedAt?: string;
   userRow?: UserRow | null;
+  completed?: Set<string>;
 } | null> {
   const cookieStore = await cookies();
   const userId =
@@ -213,11 +215,12 @@ async function resolveDashboardData(
       : (cookieStore.get("fundcalm_uid")?.value ?? undefined);
   if (userId) {
     try {
-      const [row, snapshot, userRow, allocations] = await Promise.all([
+      const [row, snapshot, userRow, allocations, completed] = await Promise.all([
         withTimeout(getUserProfile(userId), 5_000, null),
         withTimeout(getLatestSnapshot(userId), 3_000, null),
         withTimeout(getUser(userId), 3_000, null),
         withTimeout(getMonthlyAllocations(userId), 3_000, []),
+        withTimeout(getCompletedSlugs(userId), 3_000, new Set<string>()),
       ]);
       if (row) {
         const onboarding = profileToOnboardingInput(row);
@@ -229,6 +232,7 @@ async function resolveDashboardData(
           allocations,
           updatedAt: row.updated_at,
           userRow,
+          completed,
         };
       }
     } catch {
@@ -249,38 +253,7 @@ function fmtCurrency(n: number, currency: string, locale: string) {
   }).format(Math.round(Math.abs(n)));
 }
 
-
-const STATUS_HERO: Record<
-  Status,
-  { badge: string; border: string; bg: string; badgeClass: string }
-> = {
-  ok: {
-    badge: "Comfortable",
-    border: "border border-emerald-200",
-    bg: "bg-emerald-50/50",
-    badgeClass: "bg-emerald-600",
-  },
-  warning: {
-    badge: "Limited",
-    border: "border-2 border-amber-400",
-    bg: "bg-white",
-    badgeClass: "bg-amber-500",
-  },
-  risk: {
-    badge: "Attention",
-    border: "border-2 border-amber-500",
-    bg: "bg-white",
-    badgeClass: "bg-amber-600",
-  },
-  critical: {
-    badge: "Urgent",
-    border: "border-2 border-red-400",
-    bg: "bg-red-50/30",
-    badgeClass: "bg-red-600",
-  },
-};
-
-function TokenGate({ userId: _userId }: { userId: string }) {
+function TokenGate() {
   return (
     <div className="fc-surface mt-10 px-6 py-12 text-center">
       <p className="text-lg font-semibold text-slate-900">Use your email link</p>
@@ -288,7 +261,7 @@ function TokenGate({ userId: _userId }: { userId: string }) {
         Your dashboard is protected. Use the link we sent to your email address to access it.
       </p>
       <p className="mt-3 text-xs text-slate-400">
-        Can't find it? Re-enter your email on the onboarding page and we'll send a new link.
+        Can&apos;t find it? Re-enter your email on the onboarding page and we&apos;ll send a new link.
       </p>
       <Link href="/onboarding" className="fc-btn-primary mt-8">
         Get a new link
@@ -332,7 +305,7 @@ function CheckinBanner({
   if (checkinJustDone) {
     return (
       <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">
-        Numbers updated. Your dashboard has been recalculated.
+        Numbers updated. Your path has been recalculated.
       </div>
     );
   }
@@ -360,369 +333,200 @@ function CheckinBanner({
   );
 }
 
-function RunwayBar({
-  runwayMonths,
-  targetMonths,
-  projectedMonths,
-  isStale,
-}: {
-  runwayMonths: number;
-  targetMonths: number;
-  projectedMonths?: number;
-  isStale: boolean;
-}) {
-  // Bar fills proportionally; cap display at 150% of target so the bar doesn't overflow on healthy users
-  const displayMax = Math.max(targetMonths * 1.5, runwayMonths);
-  const fillPct = Math.min(100, (runwayMonths / displayMax) * 100);
-  const targetPct = Math.min(100, (targetMonths / displayMax) * 100);
-  const projectedPct = projectedMonths != null
-    ? Math.min(100, (projectedMonths / displayMax) * 100)
-    : null;
-
-  const isShort = runwayMonths < targetMonths;
-  const barColor = isShort ? "bg-amber-400" : "bg-emerald-500";
-
-  return (
-    <div>
-      <div className="relative h-3 w-full overflow-visible rounded-full bg-slate-100">
-        <div
-          className={`h-3 rounded-full transition-all ${barColor}`}
-          style={{ width: `${fillPct}%` }}
-        />
-        {projectedPct != null && projectedPct > fillPct && (
-          <div
-            className="absolute top-0 h-3 rounded-full bg-emerald-200"
-            style={{ left: `${fillPct}%`, width: `${projectedPct - fillPct}%` }}
-          />
-        )}
-        <div
-          className="absolute top-[-4px] h-5 w-0.5 rounded-full bg-slate-400"
-          style={{ left: `${targetPct}%` }}
-        />
-      </div>
-
-      <div className="relative mt-2 h-5">
-        <span
-          className="absolute -translate-x-1/2 whitespace-nowrap text-[11px] font-semibold tabular-nums text-slate-700"
-          style={{ left: `${Math.max(5, Math.min(95, fillPct))}%` }}
-        >
-          {Math.round(runwayMonths * 10) / 10} mo
-          {isStale && <span className="ml-0.5 text-slate-400">*</span>}
-        </span>
-        <span
-          className="absolute -translate-x-1/2 whitespace-nowrap text-[11px] text-slate-400"
-          style={{ left: `${Math.max(5, Math.min(92, targetPct))}%` }}
-        >
-          target: {Math.round(targetMonths * 10) / 10} mo
-        </span>
-      </div>
-    </div>
-  );
-}
-
-// ── Current state tile ──
-function CurrentStateTile({
+// ── Tile 1: Where you are ──
+function WhereYouAreTile({
   result,
   fmt,
   targetRunwayMonths,
-  isStale,
-  projectedRunway,
-  runwayDiff,
-  snapshotLabel,
+  primaryFearLabel,
 }: {
   result: FinancialResult;
   fmt: (n: number) => string;
   targetRunwayMonths: number;
-  isStale: boolean;
-  projectedRunway?: number;
-  runwayDiff: number | null;
-  snapshotLabel?: string;
+  primaryFearLabel: string;
 }) {
   const m = result.financialMetrics;
-  const hero = STATUS_HERO[result.status];
+  const runwayDisplay = Math.round(m.runway * 10) / 10;
+  const targetDisplay = Math.round(targetRunwayMonths * 10) / 10;
 
   return (
-    <section className={`flex flex-col rounded-2xl px-5 py-6 shadow-fc-sm ${hero.border} ${hero.bg}`}>
+    <section className="rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-fc-sm">
       <div className="flex items-center justify-between gap-2">
-        <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold text-white ${hero.badgeClass}`}>
-          <span className="h-1.5 w-1.5 rounded-full bg-white/90" />
-          {hero.badge}
-        </span>
         <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
-          Current state
+          Where you are
         </span>
       </div>
 
-      <p className="mt-4 text-sm font-semibold uppercase tracking-[0.06em] text-slate-500">
+      <p className="mt-3 text-base font-semibold leading-snug text-slate-900">
         {DIAGNOSIS_LABEL[result.diagnosis]}
       </p>
+      <p className="mt-1 text-xs text-slate-500">
+        Main concern: {primaryFearLabel}
+      </p>
 
-      {/* Big runway number */}
-      <div className="mt-2 flex items-baseline gap-2">
-        <span className="text-5xl font-bold tabular-nums leading-none text-slate-900">
-          {Math.round(m.runway * 10) / 10}
-        </span>
-        <span className="text-sm text-slate-500">months of runway</span>
-      </div>
+      <dl className="mt-4 grid grid-cols-3 gap-3 text-xs">
+        <div>
+          <dt className="text-slate-400">Runway</dt>
+          <dd className="mt-0.5 font-semibold tabular-nums text-slate-900">
+            {runwayDisplay} mo
+          </dd>
+        </div>
+        <div>
+          <dt className="text-slate-400">Target</dt>
+          <dd className="mt-0.5 font-semibold tabular-nums text-slate-900">
+            {targetDisplay} mo
+          </dd>
+        </div>
+        <div>
+          <dt className="text-slate-400">Gap</dt>
+          <dd
+            className={`mt-0.5 font-semibold tabular-nums ${m.gap > 0 ? "text-amber-700" : "text-emerald-700"}`}
+          >
+            {m.gap > 0 ? fmt(m.gap) : "On target"}
+          </dd>
+        </div>
+      </dl>
 
-      <div className="mt-5">
-        <RunwayBar
-          runwayMonths={m.runway}
-          targetMonths={targetRunwayMonths}
-          projectedMonths={projectedRunway}
-          isStale={isStale}
-        />
-      </div>
-
-      <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1">
-        {m.gap > 0 ? (
-          <p className="text-sm tabular-nums text-slate-700">
-            <span className="font-semibold text-red-700">{fmt(m.gap)}</span>
-            <span className="ml-1 text-slate-500">short of target</span>
-          </p>
-        ) : (
-          <p className="text-sm font-medium text-emerald-700">
-            At or above target buffer
-          </p>
-        )}
-        {runwayDiff !== null && Math.abs(runwayDiff) >= 0.1 && snapshotLabel && (
-          <p className={`text-xs font-medium tabular-nums ${runwayDiff > 0 ? "text-emerald-700" : "text-red-600"}`}>
-            {runwayDiff > 0 ? "↑" : "↓"} {runwayDiff > 0 ? "+" : ""}{runwayDiff} mo since {snapshotLabel}
-          </p>
-        )}
-      </div>
+      <p className="mt-4 text-xs leading-relaxed text-slate-600">
+        These numbers are the input. Your path below is the curriculum that fits them.
+      </p>
     </section>
   );
 }
 
-type Scenario = {
-  label: string;
-  headline: string;
-  detail: string;
-  pct: number;
-};
-
-function suggestionScenarios({
-  result,
-  input,
-  fmt,
-  savePerMonth,
-  targetRunwayMonths,
+// ── Tile 2: Today's lesson ──
+function TodaysLessonTile({
+  lesson,
+  totalDone,
+  totalPath,
+  href,
 }: {
-  result: FinancialResult;
-  input: FinancialInput;
-  fmt: (n: number) => string;
-  savePerMonth: number;
-  targetRunwayMonths: number;
-}): { headline: string; positive: Scenario; negative: Scenario } {
-  const m = result.financialMetrics;
-  const dx = result.diagnosis;
-  const progressPct =
-    m.required_cash > 0
-      ? Math.min(100, Math.round((input.cash_amount / m.required_cash) * 100))
-      : 100;
-  const monthsToTarget =
-    savePerMonth > 0 && m.gap > 0
-      ? Math.min(120, Math.ceil(m.gap / savePerMonth))
-      : null;
-  const targetMo = Math.round(targetRunwayMonths);
-
-  if (
-    dx === Diagnosis.CriticalBuffer ||
-    dx === Diagnosis.InsufficientBuffer ||
-    dx === Diagnosis.LimitedBuffer
-  ) {
-    return {
-      headline:
-        dx === Diagnosis.CriticalBuffer
-          ? "Build your cash buffer — urgent"
-          : dx === Diagnosis.InsufficientBuffer
-            ? "Build your cash buffer"
-            : "Keep building your buffer",
-      positive: {
-        label: "If you act",
-        headline:
-          savePerMonth > 0 && monthsToTarget
-            ? `Save ~${fmt(savePerMonth)}/mo`
-            : `Add ~${fmt(m.gap)} to cash`,
-        detail:
-          monthsToTarget !== null
-            ? `Reach your ${targetMo}-month buffer in ~${monthsToTarget} month${monthsToTarget === 1 ? "" : "s"}.`
-            : `Close the ${fmt(m.gap)} gap to hit your ${targetMo}-month buffer.`,
-        pct: 100,
-      },
-      negative: {
-        label: "If you don't",
-        headline: `${fmt(m.gap)} short of target`,
-        detail: `Stuck at ${Math.round(m.runway * 10) / 10} of ${targetMo} months — one income shock hits hard.`,
-        pct: Math.max(6, progressPct),
-      },
-    };
-  }
-
-  if (dx === Diagnosis.Overinvested) {
-    return {
-      headline: "Move some savings into cash",
-      positive: {
-        label: "If you act",
-        headline: `Shift ~${fmt(m.gap)} into cash`,
-        detail: `Restores a ${targetMo}-month cash cushion — you won't be forced to sell at a bad time.`,
-        pct: 100,
-      },
-      negative: {
-        label: "If you don't",
-        headline: "Exposed to timing risk",
-        detail: `${Math.round(m.runway * 10) / 10} months of cash means a market drop could force selling.`,
-        pct: Math.max(10, Math.min(60, progressPct)),
-      },
-    };
-  }
-
-  if (dx === Diagnosis.TooConservative) {
-    const surplus = -m.gap;
-    return {
-      headline: "Consider putting surplus to work",
-      positive: {
-        label: "If you act",
-        headline: `Invest ~${fmt(surplus)} gradually`,
-        detail: "Long-run growth on surplus cash outpaces inflation.",
-        pct: 100,
-      },
-      negative: {
-        label: "If you don't",
-        headline: "Cash loses purchasing power",
-        detail: "Excess cash sitting idle is eroded by inflation each year.",
-        pct: 35,
-      },
-    };
-  }
-
-  if (dx === Diagnosis.BalancedButIdle) {
-    return {
-      headline: "Start adding to longer-term savings",
-      positive: {
-        label: "If you act",
-        headline: `Invest a small monthly amount`,
-        detail: "Captures compounding growth without timing the market.",
-        pct: 100,
-      },
-      negative: {
-        label: "If you don't",
-        headline: "Potential growth left idle",
-        detail: "Cushion stays strong, but long-term upside is limited.",
-        pct: 45,
-      },
-    };
-  }
-
-  // Healthy
-  return {
-    headline: "You're in good shape",
-    positive: {
-      label: "If you stay the course",
-      headline: "Trajectory stays strong",
-      detail: "Cash and investments are well-balanced for your profile.",
-      pct: 100,
-    },
-    negative: {
-      label: "Watch for",
-      headline: "Big life changes",
-      detail: "Re-check after income shifts, house moves, or new goals.",
-      pct: 75,
-    },
-  };
-}
-
-// ── Suggestions tile with positive / negative paths ──
-function SuggestionsTile({
-  result,
-  input,
-  fmt,
-  savePerMonth,
-  targetRunwayMonths,
-}: {
-  result: FinancialResult;
-  input: FinancialInput;
-  fmt: (n: number) => string;
-  savePerMonth: number;
-  targetRunwayMonths: number;
+  lesson: Lesson | null;
+  totalDone: number;
+  totalPath: number;
+  href: string;
 }) {
-  const { headline, positive, negative } = suggestionScenarios({
-    result,
-    input,
-    fmt,
-    savePerMonth,
-    targetRunwayMonths,
-  });
+  if (!lesson) {
+    return (
+      <section className="flex flex-col rounded-2xl border border-emerald-200 bg-emerald-50/60 px-5 py-5 shadow-fc-sm">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-700">
+          Today&apos;s lesson
+        </span>
+        <p className="mt-3 text-base font-semibold text-emerald-900">
+          You&apos;ve finished your path.
+        </p>
+        <p className="mt-1 text-xs leading-relaxed text-emerald-800/80">
+          Re-read anything below, or come back after your next check-in for a refreshed path.
+        </p>
+      </section>
+    );
+  }
 
   return (
-    <section className="flex flex-col rounded-2xl border border-slate-200 bg-white px-5 py-6 shadow-fc-sm">
+    <section className="flex flex-col rounded-2xl border-2 border-slate-900 bg-white px-5 py-5 shadow-fc-sm">
       <div className="flex items-center justify-between gap-2">
         <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-900 px-2.5 py-1 text-xs font-semibold text-white">
           <span className="h-1.5 w-1.5 rounded-full bg-white/90" />
-          Next step
+          Today&apos;s lesson
         </span>
         <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
-          Suggestions
+          {totalDone}/{totalPath} done
         </span>
       </div>
 
-      <p className="mt-4 text-lg font-semibold leading-snug tracking-tight text-slate-900">
-        {headline}
+      <p className="mt-3 text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-500">
+        {PILLAR_LABEL[lesson.pillar]} · {lesson.estMinutes} min
       </p>
+      <p className="mt-1.5 text-lg font-semibold leading-snug tracking-tight text-slate-900">
+        {lesson.title}
+      </p>
+      <p className="mt-2 text-sm leading-relaxed text-slate-600">{lesson.hook}</p>
 
-      <div className="mt-5 space-y-3">
-        {/* Positive path */}
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-3">
-          <div className="flex items-center gap-1.5">
-            <svg viewBox="0 0 20 20" className="h-3.5 w-3.5 text-emerald-600" aria-hidden>
-              <path
-                fill="currentColor"
-                d="M10 2.5a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15Zm3.5 6.3-4.2 4.2a.8.8 0 0 1-1.1 0L6.5 11.3a.8.8 0 0 1 1.1-1.1l1.7 1.7 3.7-3.7a.8.8 0 0 1 1.1 1.1Z"
-              />
-            </svg>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-emerald-700">
-              {positive.label}
-            </p>
-          </div>
-          <p className="mt-1.5 text-sm font-semibold text-slate-900">{positive.headline}</p>
-          <p className="mt-1 text-xs leading-relaxed text-emerald-800/80">{positive.detail}</p>
-          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-emerald-100">
-            <div
-              className="h-1.5 rounded-full bg-emerald-500"
-              style={{ width: `${positive.pct}%` }}
-            />
-          </div>
-        </div>
-
-        {/* Negative path */}
-        <div className="rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3">
-          <div className="flex items-center gap-1.5">
-            <svg viewBox="0 0 20 20" className="h-3.5 w-3.5 text-amber-600" aria-hidden>
-              <path
-                fill="currentColor"
-                d="M10 2.2c.5 0 1 .3 1.3.8l7.3 12.5c.6 1-.2 2.2-1.3 2.2H2.7c-1.1 0-1.9-1.2-1.3-2.2L8.7 3a1.5 1.5 0 0 1 1.3-.8Zm0 5.3a.9.9 0 0 0-.9.9v3.2a.9.9 0 1 0 1.8 0V8.4a.9.9 0 0 0-.9-.9Zm0 7.1a1 1 0 1 0 0 2 1 1 0 0 0 0-2Z"
-              />
-            </svg>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-amber-700">
-              {negative.label}
-            </p>
-          </div>
-          <p className="mt-1.5 text-sm font-semibold text-slate-900">{negative.headline}</p>
-          <p className="mt-1 text-xs leading-relaxed text-amber-800/80">{negative.detail}</p>
-          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-amber-100">
-            <div
-              className="h-1.5 rounded-full bg-amber-500"
-              style={{ width: `${negative.pct}%` }}
-            />
-          </div>
-        </div>
-      </div>
+      <Link
+        href={href}
+        className="mt-5 inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"
+      >
+        Read it →
+      </Link>
     </section>
   );
 }
 
-function ClarityView({
+// ── Tile 3: Your path (5 pillars in order) ──
+function YourPathTile({ progress }: { progress: PillarProgress[] }) {
+  const currentIdx = progress.findIndex((p) => p.completed < p.total);
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-fc-sm">
+      <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+        Your path
+      </span>
+      <p className="mt-1 text-xs text-slate-500">
+        Five pillars, ordered by what your situation calls for first.
+      </p>
+
+      <ol className="mt-4 space-y-3">
+        {progress.map((p, i) => {
+          const isCurrent = i === currentIdx;
+          const isDone = p.completed >= p.total;
+          const pct = p.total > 0 ? (p.completed / p.total) * 100 : 0;
+          return <PillarRow key={p.pillar} progress={p} isCurrent={isCurrent} isDone={isDone} pct={pct} index={i} />;
+        })}
+      </ol>
+    </section>
+  );
+}
+
+function PillarRow({
+  progress,
+  isCurrent,
+  isDone,
+  pct,
+  index,
+}: {
+  progress: PillarProgress;
+  isCurrent: boolean;
+  isDone: boolean;
+  pct: number;
+  index: number;
+}) {
+  const pillar: Pillar = progress.pillar;
+  const wrapClass = isCurrent
+    ? "rounded-xl border-2 border-slate-900 bg-slate-50/60 px-3 py-2.5"
+    : "rounded-xl border border-slate-100 px-3 py-2.5";
+  return (
+    <li className={wrapClass}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+            Pillar {index + 1}
+          </p>
+          <p className="mt-0.5 text-sm font-semibold text-slate-900">
+            {PILLAR_LABEL[pillar]}{" "}
+            <span className="text-xs font-normal text-slate-400">— {PILLAR_TAGLINE[pillar]}</span>
+          </p>
+        </div>
+        <span className="shrink-0 text-xs font-semibold tabular-nums text-slate-700">
+          {progress.completed}/{progress.total}
+        </span>
+      </div>
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
+        <div
+          className={`h-1.5 rounded-full ${isDone ? "bg-emerald-500" : "bg-slate-900"}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </li>
+  );
+}
+
+const FEAR_LABEL: Record<string, string> = {
+  income_loss: "income loss",
+  market_crash: "market drops",
+  making_mistake: "making a mistake",
+  missing_opportunities: "missing out",
+};
+
+function PathView({
   result,
   input,
   countryCode,
@@ -732,6 +536,7 @@ function ClarityView({
   checkinJustDone,
   updatedAt,
   token,
+  completed,
 }: {
   result: FinancialResult;
   input: FinancialInput;
@@ -743,79 +548,68 @@ function ClarityView({
   checkinJustDone?: boolean;
   updatedAt?: string;
   token?: string;
+  completed: ReadonlySet<string>;
 }) {
   const { currency, locale } = currencyLocaleFromCountryCode(countryCode);
   const m = result.financialMetrics;
-  const savePerMonth = input.monthly_income_estimate * input.monthly_savings_rate;
   const fmt = (n: number) => fmtCurrency(n, currency, locale);
 
   const targetRunwayMonths =
     input.monthly_expenses > 0 ? m.required_cash / input.monthly_expenses : 6;
 
-  const totalAssets = input.cash_amount + input.investments_amount;
-  const investmentNudge = buildInvestmentNudge(
-    result.diagnosis,
-    {
-      cash_amount: input.cash_amount,
-      investments_amount: input.investments_amount,
-      investments_ratio: totalAssets > 0 ? input.investments_amount / totalAssets : 0,
-      required_cash: m.required_cash,
-      runway_months: m.runway,
-      target_runway_months: targetRunwayMonths,
-    },
-    input.primary_fear,
-    input.hasInvestments,
-    fmt,
-  );
+  // Curriculum
+  const path = buildCurriculumPath({
+    diagnosis: result.diagnosis,
+    fear: input.primary_fear,
+    completed,
+  });
+  const next = nextLesson(path, completed);
+  const progress = pillarProgress({
+    diagnosis: result.diagnosis,
+    fear: input.primary_fear,
+    completed,
+  });
+  const totalDone = path.filter((l) => completed.has(l.slug)).length;
 
-  const runwayDiff = snapshot?.runway_months != null
-    ? Math.round((m.runway - snapshot.runway_months) * 10) / 10
-    : null;
+  const lessonHref = next
+    ? userId
+      ? token
+        ? `/lesson/${next.slug}?user=${userId}&token=${token}`
+        : `/lesson/${next.slug}?user=${userId}`
+      : `/lesson/${next.slug}`
+    : "#";
 
-  // Staleness, drift, confidence
+  // Staleness banner
   const staleness = updatedAt ? computeStaleness(updatedAt) : null;
   const drift = staleness ? estimateDrift(input, staleness.monthsElapsed) : null;
-  const displayConfidence =
-    staleness && staleness.level !== "fresh"
-      ? applyStalenessPenalty(result.confidence, staleness)
-      : result.confidence;
-  const isStale = !!(staleness && staleness.level !== "fresh");
-
   const bannerContent = userId
-    ? (checkinJustDone
-        ? { message: "", sub: undefined, buttonLabel: "", variant: "default" as const }
-        : computeBannerContent({
-            staleness: staleness ?? computeStaleness(new Date().toISOString()),
-            drift: drift ?? {
-              estimatedMonthlySaving: 0,
-              estimatedAddedSavings: 0,
-              projectedSavingsTotal: input.savings_total,
-              projectedCashAmount: input.cash_amount,
-              projectedRunwayMonths: m.runway,
-              meaningful: false,
-            },
-            status: result.status,
-            currentRunwayMonths: m.runway,
-            targetRunwayMonths,
-            currency,
-            locale,
-            lastCheckinLabel: snapshot?.taken_at
-              ? snapshotMonthLabel(snapshot.taken_at)
-              : undefined,
-          }))
+    ? checkinJustDone
+      ? { message: "", sub: undefined, buttonLabel: "", variant: "default" as const }
+      : computeBannerContent({
+          staleness: staleness ?? computeStaleness(new Date().toISOString()),
+          drift: drift ?? {
+            estimatedMonthlySaving: 0,
+            estimatedAddedSavings: 0,
+            projectedSavingsTotal: input.savings_total,
+            projectedCashAmount: input.cash_amount,
+            projectedRunwayMonths: m.runway,
+            meaningful: false,
+          },
+          status: result.status,
+          currentRunwayMonths: m.runway,
+          targetRunwayMonths,
+          currency,
+          locale,
+          lastCheckinLabel: snapshot?.taken_at
+            ? snapshotMonthLabel(snapshot.taken_at)
+            : undefined,
+        })
     : null;
-
-  const confidenceColor =
-    displayConfidence.level === "high"
-      ? "text-emerald-700"
-      : displayConfidence.level === "medium"
-        ? "text-amber-700"
-        : "text-slate-500";
 
   return (
     <div className="space-y-4">
       <header className="flex items-baseline justify-between gap-4">
-        <h1 className="text-base font-medium text-slate-700">Your clarity</h1>
+        <h1 className="text-base font-medium text-slate-700">Your path</h1>
         <Link href="/onboarding" className="fc-link-muted shrink-0">
           Start over
         </Link>
@@ -830,46 +624,28 @@ function ClarityView({
         />
       )}
 
-      {/* ── TWO TILES: Current state + Suggestions ── */}
       <div className="grid gap-4 md:grid-cols-2">
-        <CurrentStateTile
+        <WhereYouAreTile
           result={result}
           fmt={fmt}
           targetRunwayMonths={targetRunwayMonths}
-          isStale={isStale}
-          projectedRunway={drift?.meaningful ? drift.projectedRunwayMonths : undefined}
-          runwayDiff={runwayDiff}
-          snapshotLabel={snapshot?.taken_at ? snapshotMonthLabel(snapshot.taken_at) : undefined}
+          primaryFearLabel={FEAR_LABEL[input.primary_fear] ?? input.primary_fear}
         />
-        <SuggestionsTile
-          result={result}
-          input={input}
-          fmt={fmt}
-          savePerMonth={savePerMonth}
-          targetRunwayMonths={targetRunwayMonths}
+        <TodaysLessonTile
+          lesson={next}
+          totalDone={totalDone}
+          totalPath={path.length}
+          href={lessonHref}
         />
       </div>
 
-      {isStale && (
-        <p className="text-xs text-slate-400">
-          * Based on figures from {staleness!.label}. Update for a fresh read.
-        </p>
-      )}
-      <p className={`text-xs ${confidenceColor}`}>
-        {displayConfidence.reason}
-      </p>
+      <YourPathTile progress={progress} />
 
-      {/* Investment nudge — only for stable states */}
-      <InvestmentNudgeSection nudge={investmentNudge} />
-
-      {/* DCA plan CTA — always visible when we have a userId */}
-      {userId && <DcaCta userId={userId} token={token} />}
-
-      {/* Monthly flow */}
+      {/* Monthly flow — kept as collapsible. Numbers stay relevant context. */}
       {userId ? (
         <CollapsibleSection
           title="Monthly flow"
-          subtitle="Log income, spending, and savings each month to track your savings rate over time."
+          subtitle="Log income, spending, and savings each month — your real numbers feed the path."
           defaultOpen={false}
         >
           <MonthlyLog
@@ -903,15 +679,15 @@ export default async function Dashboard({
   const allocations = resolved?.allocations;
   const updatedAt = resolved?.updatedAt;
   const userRow = resolved?.userRow;
+  const completed = resolved?.completed ?? new Set<string>();
   const checkinJustDone = sp.checkin === "1";
   const token = typeof sp.token === "string" ? sp.token : undefined;
   const result = input ? getFinancialStatus(input) : null;
 
-  // Token gate: if the user has an access token set, require it in the URL.
   if (userId && userRow?.access_token && token !== userRow.access_token) {
     return (
       <main className="pb-10 pt-2">
-        <TokenGate userId={userId} />
+        <TokenGate />
       </main>
     );
   }
@@ -924,7 +700,7 @@ export default async function Dashboard({
         <Suspense fallback={null}>
           <UserCookieSetter />
         </Suspense>
-        <ClarityView
+        <PathView
           result={result!}
           input={input!}
           onboarding={onboarding!}
@@ -935,6 +711,7 @@ export default async function Dashboard({
           checkinJustDone={checkinJustDone}
           updatedAt={updatedAt}
           token={token}
+          completed={completed}
         />
       </DashboardShell>
     </main>

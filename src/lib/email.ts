@@ -143,6 +143,15 @@ export interface DigestEmailParams {
   daysSinceLastUpdate: number;
   /** Access token for secure links. */
   accessToken?: string;
+  /** "Principle of the week" — pulled from the curriculum router. Optional. */
+  principle?: {
+    title: string;
+    hook: string;
+    /** Slug — used to construct the lesson link. */
+    slug: string;
+    /** Pillar label, e.g. "Survival". */
+    pillar: string;
+  };
 }
 
 function runwayDelta(current: string, prev: { runwayMonths: number; takenAt: string }): string {
@@ -233,7 +242,23 @@ export async function sendDigestEmail(params: DigestEmailParams) {
     </p>
     <a class="cta" href="${checkin}">Update my numbers</a>
     &nbsp;&nbsp;
-    <a href="${link}" style="font-size:14px;color:#6b7280">View dashboard</a>`;
+    <a href="${link}" style="font-size:14px;color:#6b7280">View dashboard</a>
+    ${
+      params.principle
+        ? (() => {
+            const lessonLink = `${APP_URL}/lesson/${params.principle.slug}?user=${params.userId}${params.accessToken ? `&token=${params.accessToken}` : ""}`;
+            return `
+    <div style="margin-top:28px;padding-top:20px;border-top:1px solid #f3f4f6">
+      <p style="margin:0 0 4px;font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.08em">
+        Principle of the week · ${params.principle.pillar}
+      </p>
+      <p style="margin:0 0 6px;font-size:17px;font-weight:600;color:#111827">${params.principle.title}</p>
+      <p style="margin:0 0 12px;font-size:14px;line-height:1.5;color:#4b5563">${params.principle.hook}</p>
+      <a href="${lessonLink}" style="font-size:14px;color:#059669;font-weight:600;text-decoration:underline">Read the lesson →</a>
+    </div>`;
+          })()
+        : ""
+    }`;
 
   await resend.emails.send({
     from: FROM,

@@ -18,6 +18,9 @@ import {
   fromOnboarding,
 } from "@/lib/engine";
 import { currencyLocaleFromCountryCode } from "@/lib/money-tiers";
+import { getCompletedSlugs } from "@/lib/lesson-progress";
+import { buildCurriculumPath, nextLesson } from "@/lib/curriculum";
+import { PILLAR_LABEL } from "@/lib/lessons/types";
 
 const STATUS_LABELS: Record<string, string> = {
   ok: "Comfortable",
@@ -71,9 +74,10 @@ export async function POST(req: NextRequest) {
     if (!user.email) continue;
 
     try {
-      const [profileRow, snapshot] = await Promise.all([
+      const [profileRow, snapshot, completed] = await Promise.all([
         getUserProfile(user.id),
         getLatestSnapshot(user.id),
+        getCompletedSlugs(user.id).catch(() => new Set<string>()),
       ]);
 
       if (!profileRow) continue;
@@ -82,6 +86,13 @@ export async function POST(req: NextRequest) {
       const financial = fromOnboarding(onboarding);
       const result = getFinancialStatus(financial);
       const { currency, locale } = currencyLocaleFromCountryCode(onboarding.country);
+
+      const path = buildCurriculumPath({
+        diagnosis: result.diagnosis,
+        fear: financial.primary_fear,
+        completed,
+      });
+      const principleLesson = nextLesson(path, completed);
 
       const m = result.financialMetrics;
       const runwayMonths = Math.round(m.runway * 10) / 10;
@@ -114,6 +125,14 @@ export async function POST(req: NextRequest) {
           : null,
         countryLabel: onboarding.country,
         daysSinceLastUpdate,
+        principle: principleLesson
+          ? {
+              title: principleLesson.title,
+              hook: principleLesson.hook,
+              slug: principleLesson.slug,
+              pillar: PILLAR_LABEL[principleLesson.pillar],
+            }
+          : undefined,
       });
 
       sent++;
